@@ -99,8 +99,9 @@ async function apiCall(endpoint, options = {}) {
           return;
         }
         if (response.status === 403) {
-          // 403 Forbidden - không có quyền, hiển thị thông báo
-          throw new Error('Bạn không có quyền thực hiện thao tác này');
+          // 403 Forbidden - không có quyền, hiển thị thông báo chi tiết
+          const errorMsg = data.error || 'Bạn không có quyền thực hiện thao tác này';
+          throw new Error('🔐 ' + errorMsg);
         }
         throw new Error(data.error || 'Có lỗi xảy ra');
       }
@@ -116,6 +117,65 @@ async function apiCall(endpoint, options = {}) {
   } catch (error) {
     console.error('API Error:', error);
     throw error;
+  }
+}
+
+// Helper function để chuyển FormData sang object
+function formDataToObject(formData) {
+  const data = {};
+  for (let [key, value] of formData.entries()) {
+    // Trim string values but keep empty string instead of null
+    if (typeof value === 'string') {
+      data[key] = value.trim();
+    } else {
+      data[key] = value;
+    }
+  }
+  return data;
+}
+
+// Helper function để upload ảnh thành base64
+function handleImageUpload(inputId, targetFieldName) {
+  const input = document.getElementById(inputId);
+  const file = input.files[0];
+  
+  if (!file) return;
+  
+  // Kiểm tra file size (max 5MB)
+  if (file.size > 5 * 1024 * 1024) {
+    alert('File quá lớn! Vui lòng chọn ảnh dưới 5MB');
+    input.value = '';
+    return;
+  }
+  
+  // Kiểm tra file type
+  if (!file.type.startsWith('image/')) {
+    alert('Vui lòng chọn file ảnh!');
+    input.value = '';
+    return;
+  }
+  
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const base64String = e.target.result;
+    // Lưu vào hidden input
+    const hiddenInput = document.querySelector(`input[name="${targetFieldName}"]`);
+    if (hiddenInput) {
+      hiddenInput.value = base64String;
+      console.log(`✅ Đã upload ảnh cho ${targetFieldName}`);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// Helper function để đóng modal
+function closeModal(event) {
+  // Nếu có event và không phải click vào overlay thì return
+  if (event && event.target.className !== 'modal-overlay') return;
+  
+  const modalOverlay = document.querySelector('.modal-overlay');
+  if (modalOverlay) {
+    modalOverlay.remove();
   }
 }
 
@@ -152,22 +212,46 @@ function loadPage(page) {
       renderAccounting(content);
       break;
     case 'salaries':
-      renderSalaries(content);
+      if (typeof window.renderSalaries === 'function') {
+        window.renderSalaries(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module Lương chưa tải xong</p>';
+      }
       break;
     case 'maintenance':
-      renderMaintenance(content);
+      if (typeof window.renderMaintenance === 'function') {
+        window.renderMaintenance(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module Bảo dưỡng chưa tải xong</p>';
+      }
       break;
     case 'fuel':
-      renderFuelManagement(content);
+      if (typeof window.renderFuelManagement === 'function') {
+        window.renderFuelManagement(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module Quản lý nhiên liệu chưa tải xong</p>';
+      }
       break;
     case 'cashflow':
-      renderCashFlow(content);
+      if (typeof window.renderCashFlow === 'function') {
+        window.renderCashFlow(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module Thu chi chưa tải xong</p>';
+      }
       break;
     case 'expense-reports':
-      renderExpenseReports(content);
+      if (typeof window.renderExpenseReports === 'function') {
+        window.renderExpenseReports(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module Báo cáo chi phí chưa tải xong</p>';
+      }
       break;
     case 'crm':
-      renderCRM(content);
+      if (typeof window.renderCRM === 'function') {
+        window.renderCRM(content);
+      } else {
+        content.innerHTML = '<p class="error">⚠️ Module CRM chưa tải xong</p>';
+      }
       break;
     case 'users':
       renderUsers(content);
@@ -193,9 +277,52 @@ async function renderDashboard(container) {
   `;
   
   try {
-    const overview = await apiCall('/reports/overview');
-    const orders = await apiCall('/orders');
+    const [overview, orders, customers, vehicles, drivers] = await Promise.all([
+      apiCall('/reports/overview'),
+      apiCall('/orders'),
+      apiCall('/customers'),
+      apiCall('/vehicles'),
+      apiCall('/drivers')
+    ]);
+    
     const recentOrders = orders.slice(0, 10);
+    
+    // Thống kê trạng thái đơn hàng
+    const pendingOrders = orders.filter(o => o.status === 'pending').length;
+    const inTransitOrders = orders.filter(o => o.status === 'in-transit').length;
+    const completedOrders = orders.filter(o => o.status === 'completed').length;
+    
+    // Thống kê xe
+    const availableVehicles = vehicles.filter(v => v.status === 'available').length;
+    const inUseVehicles = vehicles.filter(v => v.status === 'in-use').length;
+    const maintenanceVehicles = vehicles.filter(v => v.status === 'maintenance').length;
+    
+    // Top 5 khách hàng theo doanh thu
+    const customerRevenue = {};
+    orders.forEach(o => {
+      if (!customerRevenue[o.customer_id]) {
+        customerRevenue[o.customer_id] = {
+          name: o.customer_name,
+          revenue: 0,
+          orders: 0
+        };
+      }
+      customerRevenue[o.customer_id].revenue += (o.final_amount || o.price || 0);
+      customerRevenue[o.customer_id].orders += 1;
+    });
+    const topCustomers = Object.values(customerRevenue)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+    
+    // Khách hàng có công nợ cao
+    const debtCustomers = customers
+      .filter(c => c.current_debt > 0)
+      .sort((a, b) => b.current_debt - a.current_debt)
+      .slice(0, 5);
+    
+    // Tài xế đang hoạt động
+    const activeDrivers = drivers.filter(d => d.status === 'active').length;
+    const inactiveDrivers = drivers.filter(d => d.status === 'inactive').length;
     
     // Load alerts for admin/dispatcher
     let alertsHTML = '';
@@ -229,33 +356,146 @@ async function renderDashboard(container) {
     
     container.innerHTML = `
       <div class="page-header">
-        <h1>📊 Dashboard</h1>
+        <h1>📊 Dashboard - Tổng quan hệ thống</h1>
       </div>
       
       ${alertsHTML}
       
+      <h3 style="margin-top: 20px;">💰 Tài chính</h3>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-label">Tổng đơn hàng</div>
           <div class="stat-value">${overview.totalOrders}</div>
+          <div class="stat-footer">
+            <span class="badge badge-info">${pendingOrders} chờ</span>
+            <span class="badge badge-warning">${inTransitOrders} vận chuyển</span>
+            <span class="badge badge-success">${completedOrders} hoàn thành</span>
+          </div>
         </div>
         <div class="stat-card success">
           <div class="stat-label">Tổng doanh thu</div>
           <div class="stat-value">${formatMoney(overview.totalRevenue)}</div>
+          <div class="stat-footer">Doanh thu từ ${overview.totalOrders} đơn</div>
         </div>
         <div class="stat-card warning">
           <div class="stat-label">Tổng chi phí</div>
           <div class="stat-value">${formatMoney(overview.totalCosts)}</div>
+          <div class="stat-footer">Chi phí vận hành</div>
         </div>
         <div class="stat-card ${overview.profit >= 0 ? 'success' : 'danger'}">
           <div class="stat-label">Lợi nhuận</div>
           <div class="stat-value">${formatMoney(overview.profit)}</div>
+          <div class="stat-footer">
+            Tỷ suất: ${overview.totalRevenue > 0 ? ((overview.profit / overview.totalRevenue) * 100).toFixed(1) : 0}%
+          </div>
         </div>
       </div>
       
-      <div class="card">
+      <h3 style="margin-top: 30px;">🚛 Tài nguyên</h3>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Xe đầu kéo</div>
+          <div class="stat-value">${vehicles.length}</div>
+          <div class="stat-footer">
+            <span style="color: #4caf50;">${availableVehicles} sẵn sàng</span> • 
+            <span style="color: #ff9800;">${inUseVehicles} đang chạy</span> • 
+            <span style="color: #f44336;">${maintenanceVehicles} bảo trì</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Tài xế</div>
+          <div class="stat-value">${drivers.length}</div>
+          <div class="stat-footer">
+            <span style="color: #4caf50;">${activeDrivers} đang làm</span> • 
+            <span style="color: #999;">${inactiveDrivers} nghỉ việc</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Khách hàng</div>
+          <div class="stat-value">${customers.length}</div>
+          <div class="stat-footer">
+            <span style="color: #f44336;">${debtCustomers.length} có công nợ</span>
+          </div>
+        </div>
+        <div class="stat-card warning">
+          <div class="stat-label">Tổng công nợ</div>
+          <div class="stat-value">${formatMoney(customers.reduce((sum, c) => sum + (c.current_debt || 0), 0))}</div>
+          <div class="stat-footer">Từ ${debtCustomers.length} khách hàng</div>
+        </div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 30px;">
+        <div class="card">
+          <div class="card-header">
+            <h3>🏆 Top 5 khách hàng</h3>
+          </div>
+          <div class="card-body">
+            ${topCustomers.length > 0 ? `
+              <table style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>Khách hàng</th>
+                    <th class="text-center">Số đơn</th>
+                    <th class="text-right">Doanh thu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${topCustomers.map((c, idx) => `
+                    <tr>
+                      <td><strong>${idx + 1}. ${c.name}</strong></td>
+                      <td class="text-center">${c.orders}</td>
+                      <td class="text-right" style="color: #4caf50; font-weight: bold;">
+                        ${formatMoney(c.revenue)}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="empty-state"><p>Chưa có dữ liệu</p></div>'}
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h3>⚠️ Công nợ cần theo dõi</h3>
+          </div>
+          <div class="card-body">
+            ${debtCustomers.length > 0 ? `
+              <table style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>Khách hàng</th>
+                    <th class="text-right">Công nợ</th>
+                    <th class="text-right">Hạn mức</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${debtCustomers.map(c => {
+                    const debtPercent = c.credit_limit > 0 ? (c.current_debt / c.credit_limit * 100) : 0;
+                    const isOverLimit = debtPercent > 100;
+                    return `
+                      <tr>
+                        <td><strong>${c.name}</strong></td>
+                        <td class="text-right" style="color: ${isOverLimit ? '#f44336' : '#ff9800'}; font-weight: bold;">
+                          ${formatMoney(c.current_debt)}
+                        </td>
+                        <td class="text-right">
+                          ${formatMoney(c.credit_limit)}
+                          ${isOverLimit ? '<br><span class="badge badge-danger">Vượt hạn mức</span>' : ''}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="empty-state"><p style="color: #4caf50;">✓ Không có công nợ</p></div>'}
+          </div>
+        </div>
+      </div>
+      
+      <div class="card" style="margin-top: 20px;">
         <div class="card-header">
-          <h3>Đơn hàng gần đây</h3>
+          <h3>📦 Đơn hàng gần đây</h3>
           <button class="btn btn-primary btn-sm" onclick="loadPage('orders')">Xem tất cả</button>
         </div>
         <div class="card-body">
@@ -270,17 +510,21 @@ async function renderDashboard(container) {
                     <th>Ngày</th>
                     <th>Trạng thái</th>
                     <th>Giá cước</th>
+                    <th>Thành tiền</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${recentOrders.map(order => `
-                    <tr>
-                      <td>${order.order_code}</td>
+                    <tr onclick="viewOrderDetail(${order.id})" style="cursor: pointer;">
+                      <td><strong>${order.order_code}</strong></td>
                       <td>${order.customer_name}</td>
                       <td>${order.container_number || '-'}</td>
                       <td>${formatDate(order.order_date)}</td>
                       <td>${getStatusBadge(order.status)}</td>
                       <td class="text-right">${formatMoney(order.price)}</td>
+                      <td class="text-right" style="font-weight: bold; color: #4caf50;">
+                        ${formatMoney(order.final_amount || order.price)}
+                      </td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -323,7 +567,7 @@ async function renderOrders(container) {
             <label>Khách hàng</label>
             <select id="filterCustomer" onchange="filterOrders()">
               <option value="">Tất cả</option>
-              ${customers.map(c => `<option value="${c.id}">${c.company_name}</option>`).join('')}
+              ${customers.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">
@@ -416,7 +660,7 @@ function showOrderModal(orderId = null) {
                 <option value="">-- Chọn khách hàng --</option>
                 ${customers.map(c => `
                   <option value="${c.id}" ${order && order.customer_id == c.id ? 'selected' : ''}>
-                    ${c.company_name}
+                    ${c.name}
                   </option>
                 `).join('')}
               </select>
@@ -510,6 +754,31 @@ function showOrderModal(orderId = null) {
           
           <div class="form-row">
             <div class="form-group">
+              <label>Booking Number</label>
+              <input type="text" name="booking_number" value="${order ? (order.booking_number || '') : ''}" placeholder="Mã booking">
+            </div>
+            <div class="form-group">
+              <label>Bill of Lading (B/L)</label>
+              <input type="text" name="bill_of_lading" value="${order ? (order.bill_of_lading || '') : ''}" placeholder="Số vận đơn">
+            </div>
+            <div class="form-group">
+              <label>Seal Number</label>
+              <input type="text" name="seal_number" value="${order ? (order.seal_number || '') : ''}" placeholder="Số seal">
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label>Loại hàng hóa</label>
+              <select name="cargo_type">
+                <option value="">-- Chọn loại --</option>
+                <option value="Nguyên liệu" ${order && order.cargo_type === 'Nguyên liệu' ? 'selected' : ''}>Nguyên liệu</option>
+                <option value="Thành phẩm" ${order && order.cargo_type === 'Thành phẩm' ? 'selected' : ''}>Thành phẩm</option>
+                <option value="Hàng nguy hiểm" ${order && order.cargo_type === 'Hàng nguy hiểm' ? 'selected' : ''}>Hàng nguy hiểm</option>
+                <option value="Khác" ${order && order.cargo_type === 'Khác' ? 'selected' : ''}>Khác</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label>Số lượng</label>
               <input type="number" name="quantity" step="0.01" value="${order ? (order.quantity || '') : ''}">
             </div>
@@ -522,15 +791,30 @@ function showOrderModal(orderId = null) {
           <div class="form-row">
             <div class="form-group">
               <label>Cước vận chuyển (VND) *</label>
-              <input type="number" name="price" step="1000" value="${order ? order.price : ''}" required>
+              <input type="number" id="orderPrice" name="price" step="1000" value="${order ? order.price : ''}" required onchange="calculateOrderTotal()">
             </div>
             <div class="form-group">
               <label>Néo xe (VND)</label>
-              <input type="number" name="neo_xe" step="1000" value="${order ? (order.neo_xe || 0) : 0}">
+              <input type="number" id="orderNeoXe" name="neo_xe" step="1000" value="${order ? (order.neo_xe || 0) : 0}" onchange="calculateOrderTotal()">
             </div>
             <div class="form-group">
               <label>Chi hộ (VND)</label>
-              <input type="number" name="chi_ho" step="1000" value="${order ? (order.chi_ho || 0) : 0}">
+              <input type="number" id="orderChiHo" name="chi_ho" step="1000" value="${order ? (order.chi_ho || 0) : 0}" onchange="calculateOrderTotal()">
+            </div>
+          </div>
+          
+          <div class="form-row" style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-top: 10px;">
+            <div class="form-group">
+              <label>Tổng trước VAT</label>
+              <input type="text" id="orderSubtotal" readonly style="background: #e8f4f8; font-weight: bold;" value="0">
+            </div>
+            <div class="form-group">
+              <label>VAT (10%)</label>
+              <input type="text" id="orderVAT" readonly style="background: #e8f4f8; font-weight: bold;" value="0">
+            </div>
+            <div class="form-group">
+              <label style="color: #d32f2f;">Tổng cuối cùng</label>
+              <input type="number" id="orderFinalAmount" name="final_amount" readonly style="background: #fff3e0; font-weight: bold; color: #d32f2f; font-size: 16px;" value="${order ? order.final_amount || 0 : 0}">
             </div>
           </div>
           
@@ -559,6 +843,26 @@ function showOrderModal(orderId = null) {
   `;
   
   document.getElementById('modalContainer').innerHTML = modal;
+  
+  // Tính tổng nếu đang edit order có sẵn giá trị
+  if (order && order.price) {
+    setTimeout(() => calculateOrderTotal(), 100);
+  }
+}
+
+// Tính tổng đơn hàng với VAT
+function calculateOrderTotal() {
+  const price = parseFloat(document.getElementById('orderPrice')?.value || 0);
+  const neoXe = parseFloat(document.getElementById('orderNeoXe')?.value || 0);
+  const chiHo = parseFloat(document.getElementById('orderChiHo')?.value || 0);
+  
+  const subtotal = price + neoXe + chiHo;
+  const vat = Math.round(subtotal * 0.1);
+  const finalAmount = subtotal + vat;
+  
+  document.getElementById('orderSubtotal').value = formatMoney(subtotal);
+  document.getElementById('orderVAT').value = formatMoney(vat);
+  document.getElementById('orderFinalAmount').value = finalAmount;
 }
 
 async function saveOrder(event, orderId) {
@@ -570,7 +874,8 @@ async function saveOrder(event, orderId) {
   // Convert empty strings to null for optional fields only
   const optionalFields = ['route_id', 'vehicle_id', 'driver_id', 'pickup_date', 'delivery_date', 
                           'pickup_location', 'intermediate_point', 'delivery_location', 
-                          'cargo_description', 'quantity', 'weight', 'notes'];
+                          'cargo_description', 'quantity', 'weight', 'notes',
+                          'booking_number', 'bill_of_lading', 'seal_number', 'cargo_type'];
   
   optionalFields.forEach(field => {
     if (data[field] === '') data[field] = null;
@@ -596,6 +901,35 @@ async function saveOrder(event, orderId) {
   if (!data.price) {
     alert('Vui lòng nhập cước vận chuyển');
     return;
+  }
+  
+  // Kiểm tra hạn mức công nợ khi tạo đơn mới
+  if (!orderId && data.customer_id && data.final_amount) {
+    try {
+      const customer = await apiCall(`/customers/${data.customer_id}`);
+      const currentDebt = customer.current_debt || 0;
+      const creditLimit = customer.credit_limit || 0;
+      const newTotalDebt = currentDebt + parseFloat(data.final_amount);
+      
+      if (creditLimit > 0 && newTotalDebt > creditLimit) {
+        const exceed = newTotalDebt - creditLimit;
+        const confirmMsg = `⚠️ CẢNH BÁO VƯỢT HẠN MỨC CÔNG NỢ!\n\n` +
+                          `Khách hàng: ${customer.name}\n` +
+                          `Công nợ hiện tại: ${formatMoney(currentDebt)} VND\n` +
+                          `Hạn mức: ${formatMoney(creditLimit)} VND\n` +
+                          `Đơn hàng này: ${formatMoney(data.final_amount)} VND\n` +
+                          `Tổng công nợ sau: ${formatMoney(newTotalDebt)} VND\n` +
+                          `Vượt hạn mức: ${formatMoney(exceed)} VND\n\n` +
+                          `Bạn có chắc chắn muốn tiếp tục tạo đơn?`;
+        
+        if (!confirm(confirmMsg)) {
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Error checking credit limit:', err);
+      // Tiếp tục tạo đơn nếu không check được
+    }
   }
   
   console.log('Saving order data:', data);
@@ -967,9 +1301,34 @@ function calculateFuelAmount() {
   const liters = parseFloat(document.getElementById('fuelLiters').value) || 0;
   const pricePerLiter = parseFloat(document.getElementById('fuelPrice').value) || 0;
   
+  // Validation: Giá dầu phải từ 15,000 đến 40,000 VND/lít
+  if (pricePerLiter > 0 && (pricePerLiter < 15000 || pricePerLiter > 40000)) {
+    const warningDiv = document.getElementById('fuelWarning') || createWarningDiv();
+    warningDiv.style.display = 'block';
+    warningDiv.innerHTML = `
+      <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 5px; margin: 10px 0;">
+        <strong>⚠️ Cảnh báo:</strong> Giá dầu bất thường! 
+        <br>Giá nhập: <strong>${pricePerLiter.toLocaleString('vi-VN')}</strong> VND/lít
+        <br>Khoảng giá hợp lý: <strong>15,000 - 40,000</strong> VND/lít
+        <br><em>Vui lòng kiểm tra lại nếu đây không phải giá thực tế</em>
+      </div>
+    `;
+  } else {
+    const warningDiv = document.getElementById('fuelWarning');
+    if (warningDiv) warningDiv.style.display = 'none';
+  }
+  
   if (liters > 0 && pricePerLiter > 0) {
     document.getElementById('totalAmount').value = Math.round(liters * pricePerLiter);
   }
+}
+
+function createWarningDiv() {
+  const warningDiv = document.createElement('div');
+  warningDiv.id = 'fuelWarning';
+  const fuelPriceInput = document.getElementById('fuelPrice');
+  fuelPriceInput.parentNode.appendChild(warningDiv);
+  return warningDiv;
 }
 
 function previewInvoice(input) {
@@ -982,7 +1341,7 @@ function previewInvoice(input) {
 async function saveCost(event, orderId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
   
   // Remove file field as upload is not yet implemented
   delete data.invoice_file;
@@ -993,6 +1352,7 @@ async function saveCost(event, orderId) {
   if (!data.distance_km) data.distance_km = null;
   
   try {
+    console.log('📤 Saving cost:', data);
     await apiCall(`/orders/${orderId}/costs`, {
       method: 'POST',
       body: JSON.stringify(data)
@@ -1001,6 +1361,7 @@ async function saveCost(event, orderId) {
     closeModal();
     viewOrderDetail(orderId);
   } catch (error) {
+    console.error('❌ Cost save error:', error);
     alert('Lỗi tạo chi phí: ' + error.message);
   }
 }
@@ -1077,10 +1438,11 @@ function showPaymentModal(orderId, customerId) {
 async function savePayment(event, orderId, customerId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
   data.customer_id = customerId;
   
   try {
+    console.log('📤 Saving payment:', data);
     await apiCall(`/orders/${orderId}/payments`, {
       method: 'POST',
       body: JSON.stringify(data)
@@ -1089,6 +1451,7 @@ async function savePayment(event, orderId, customerId) {
     closeModal();
     viewOrderDetail(orderId);
   } catch (error) {
+    console.error('❌ Payment save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -1162,10 +1525,11 @@ function showAdvanceModal(orderId, driverId) {
 async function saveAdvance(event, orderId, driverId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
   data.driver_id = driverId;
   
   try {
+    console.log('📤 Saving advance:', data);
     await apiCall(`/orders/${orderId}/advances`, {
       method: 'POST',
       body: JSON.stringify(data)
@@ -1175,6 +1539,7 @@ async function saveAdvance(event, orderId, driverId) {
     closeModal();
     viewOrderDetail(orderId);
   } catch (error) {
+    console.error('❌ Advance save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -1365,19 +1730,19 @@ async function exportWaybill(orderId) {
   
   <div class="footer">
     <p><strong>Bằng chữ:</strong> ${numberToWords(finalTotal)} đồng</p>
-    <p>Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: <strong>0500780826263 - TRẦN NGỌC TIẾN - Ngân hàng: Sacombank</strong></p>
+    <p>Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: <strong>0500780826263 - TRẦN NGỌC TIÊN - Ngân hàng: Sacombank</strong></p>
   </div>
   
   <div class="signature">
     <div>
-      <p><strong>${(customer.company_name || customer.contact_name || '').toUpperCase()}</strong></p>
+      <p><strong>${(customer.name || customer.contact_person || '').toUpperCase()}</strong></p>
       <p style="margin: 50px 0 5px 0;"></p>
-      <p><strong>${(customer.contact_name || '').toUpperCase()}</strong></p>
+      <p><strong>${(customer.contact_person || '').toUpperCase()}</strong></p>
     </div>
     <div>
       <p><strong>CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH TRANSPORT</strong></p>
       <p style="margin: 50px 0 5px 0;"></p>
-      <p><strong>TRẦN NGỌC TIẾN</strong></p>
+      <p><strong>TRẦN NGỌC TIÊN</strong></p>
     </div>
   </div>
   
@@ -1469,8 +1834,8 @@ async function renderCustomers(container) {
                 <tbody>
                   ${customers.map(c => `
                     <tr>
-                      <td><strong>${c.company_name}</strong></td>
-                      <td>${c.contact_name || '-'}</td>
+                      <td><strong>${c.name}</strong></td>
+                      <td>${c.contact_person || '-'}</td>
                       <td>${c.phone || '-'}</td>
                       <td>${c.email || '-'}</td>
                       <td>${c.tax_code || '-'}</td>
@@ -1496,6 +1861,11 @@ async function renderCustomers(container) {
 }
 
 function showCustomerModal(customerId = null) {
+  // Initialize customersData if not exists
+  if (!window.customersData) {
+    window.customersData = [];
+  }
+  
   const customer = customerId ? window.customersData.find(c => c.id === customerId) : null;
   
   const modal = `
@@ -1508,12 +1878,12 @@ function showCustomerModal(customerId = null) {
         <form id="customerForm" class="modal-body" onsubmit="saveCustomer(event, ${customerId})">
           <div class="form-group">
             <label>Tên công ty *</label>
-            <input type="text" name="company_name" value="${customer ? customer.company_name : ''}" required>
+            <input type="text" name="name" value="${customer ? customer.name : ''}" required>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label>Người liên hệ</label>
-              <input type="text" name="contact_name" value="${customer ? (customer.contact_name || '') : ''}">
+              <input type="text" name="contact_person" value="${customer ? (customer.contact_person || '') : ''}">
             </div>
             <div class="form-group">
               <label>Điện thoại</label>
@@ -1557,9 +1927,26 @@ function showCustomerModal(customerId = null) {
 async function saveCustomer(event, customerId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
+  
+  console.log('🔍 FormData keys:', Array.from(formData.keys()));
+  console.log('🔍 FormData entries:');
+  for (let [key, value] of formData.entries()) {
+    console.log(`  ${key}: "${value}" (${typeof value}, length: ${value.length})`);
+  }
+  console.log('🔍 Converted object:', data);
+  
+  // Validate trước khi gửi
+  if (!data.name || !data.name.trim()) {
+    console.error('❌ Validation failed: empty name');
+    alert('Vui lòng nhập tên công ty');
+    return;
+  }
+  
+  console.log('✅ Validation passed, sending to server...');
   
   try {
+    console.log('📤 Saving customer:', data);
     if (customerId) {
       await apiCall(`/customers/${customerId}`, {
         method: 'PUT',
@@ -1572,9 +1959,11 @@ async function saveCustomer(event, customerId) {
       });
     }
     
+    console.log('✅ Save successful');
     closeModal();
     loadPage('customers');
   } catch (error) {
+    console.error('❌ Customer save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -1683,8 +2072,48 @@ function showDriverModal(driverId = null) {
               <input type="text" name="license_number" value="${driver ? (driver.license_number || '') : ''}">
             </div>
             <div class="form-group">
+              <label>Loại GPLX</label>
+              <select name="license_type">
+                <option value="">-- Chọn loại --</option>
+                <option value="B2" ${driver && driver.license_type === 'B2' ? 'selected' : ''}>B2</option>
+                <option value="C" ${driver && driver.license_type === 'C' ? 'selected' : ''}>C</option>
+                <option value="D" ${driver && driver.license_type === 'D' ? 'selected' : ''}>D</option>
+                <option value="E" ${driver && driver.license_type === 'E' ? 'selected' : ''}>E</option>
+                <option value="FC" ${driver && driver.license_type === 'FC' ? 'selected' : ''}>FC</option>
+                <option value="FD" ${driver && driver.license_type === 'FD' ? 'selected' : ''}>FD</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label>Hạn GPLX</label>
               <input type="date" name="license_expiry" value="${driver ? (driver.license_expiry || '') : ''}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Ngày sinh</label>
+              <input type="date" name="birth_date" value="${driver ? (driver.birth_date || '') : ''}">
+            </div>
+            <div class="form-group">
+              <label>Ngày vào làm</label>
+              <input type="date" name="hire_date" value="${driver ? (driver.hire_date || '') : ''}">
+            </div>
+            <div class="form-group">
+              <label>Lương cơ bản (VND)</label>
+              <input type="number" name="base_salary" step="100000" value="${driver ? (driver.base_salary || 0) : 0}">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Ảnh CMND (base64)</label>
+              <input type="file" id="idCardImageInput" accept="image/*" onchange="handleImageUpload('idCardImageInput', 'id_card_image')">
+              <input type="hidden" name="id_card_image" value="${driver ? (driver.id_card_image || '') : ''}">
+              ${driver && driver.id_card_image ? '<small style="color: green;">✓ Đã có ảnh</small>' : ''}
+            </div>
+            <div class="form-group">
+              <label>Ảnh GPLX (base64)</label>
+              <input type="file" id="licenseImageInput" accept="image/*" onchange="handleImageUpload('licenseImageInput', 'license_image')">
+              <input type="hidden" name="license_image" value="${driver ? (driver.license_image || '') : ''}">
+              ${driver && driver.license_image ? '<small style="color: green;">✓ Đã có ảnh</small>' : ''}
             </div>
           </div>
           <div class="form-group">
@@ -1717,9 +2146,16 @@ function showDriverModal(driverId = null) {
 async function saveDriver(event, driverId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = {};
+  
+  // Chuyển FormData sang object
+  for (let [key, value] of formData.entries()) {
+    data[key] = value || null;
+  }
   
   try {
+    console.log('📤 Saving driver:', data);
+    
     if (driverId) {
       await apiCall(`/drivers/${driverId}`, {
         method: 'PUT',
@@ -1735,6 +2171,7 @@ async function saveDriver(event, driverId) {
     closeModal();
     loadPage('drivers');
   } catch (error) {
+    console.error('❌ Save driver error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -1905,6 +2342,48 @@ function showVehicleModal(vehicleId = null) {
               <input type="date" name="insurance_expiry" value="${vehicle ? (vehicle.insurance_expiry || '') : ''}">
             </div>
           </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label>Số khung (VIN)</label>
+              <input type="text" name="vin_number" value="${vehicle ? (vehicle.vin_number || '') : ''}" placeholder="17 ký tự">
+            </div>
+            <div class="form-group">
+              <label>Số máy</label>
+              <input type="text" name="engine_number" value="${vehicle ? (vehicle.engine_number || '') : ''}" placeholder="Số động cơ">
+            </div>
+            <div class="form-group">
+              <label>Màu sắc</label>
+              <input type="text" name="color" value="${vehicle ? (vehicle.color || '') : ''}" placeholder="VD: Trắng">
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label>Chủ sở hữu</label>
+              <select name="ownership">
+                <option value="">-- Chọn loại --</option>
+                <option value="Công ty" ${vehicle && vehicle.ownership === 'Công ty' ? 'selected' : ''}>Công ty</option>
+                <option value="Cá nhân" ${vehicle && vehicle.ownership === 'Cá nhân' ? 'selected' : ''}>Cá nhân</option>
+                <option value="Thuê" ${vehicle && vehicle.ownership === 'Thuê' ? 'selected' : ''}>Thuê</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Giá mua (VND)</label>
+              <input type="number" name="purchase_price" step="1000000" value="${vehicle ? (vehicle.purchase_price || '') : ''}" placeholder="VD: 1200000000">
+            </div>
+            <div class="form-group">
+              <label>Ngày mua</label>
+              <input type="date" name="purchase_date" value="${vehicle ? (vehicle.purchase_date || '') : ''}">
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label>Km hiện tại (odometer)</label>
+              <input type="number" name="current_odometer" value="${vehicle ? (vehicle.current_odometer || '') : ''}" placeholder="VD: 125000">
+            </div>
+          </div>
           <div class="form-group">
             <label>Ghi chú</label>
             <textarea name="notes" rows="2">${vehicle ? (vehicle.notes || '') : ''}</textarea>
@@ -1924,9 +2403,21 @@ function showVehicleModal(vehicleId = null) {
 async function saveVehicle(event, vehicleId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = {};
+  
+  // Chuyển FormData sang object và xử lý kiểu dữ liệu
+  for (let [key, value] of formData.entries()) {
+    // Nếu là số, chuyển sang số
+    if (key.includes('power') || key.includes('capacity') || key.includes('fuel_consumption') || key.includes('year')) {
+      data[key] = value ? parseFloat(value) : null;
+    } else {
+      data[key] = value || null;
+    }
+  }
   
   try {
+    console.log('📤 Sending data:', data);
+    
     if (vehicleId) {
       await apiCall(`/vehicles/${vehicleId}`, {
         method: 'PUT',
@@ -1942,6 +2433,7 @@ async function saveVehicle(event, vehicleId) {
     closeModal();
     loadPage('vehicles');
   } catch (error) {
+    console.error('❌ Save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -2079,9 +2571,10 @@ function showContainerModal(containerId = null) {
 async function saveContainer(event, containerId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
   
   try {
+    console.log('📤 Saving container:', data);
     if (containerId) {
       await apiCall(`/containers/${containerId}`, {
         method: 'PUT',
@@ -2099,6 +2592,7 @@ async function saveContainer(event, containerId) {
     closeModal();
     loadPage('containers');
   } catch (error) {
+    console.error('❌ Container save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -2229,9 +2723,10 @@ function showRouteModal(routeId = null) {
 async function saveRoute(event, routeId) {
   event.preventDefault();
   const formData = new FormData(event.target);
-  const data = Object.fromEntries(formData);
+  const data = formDataToObject(formData);
   
   try {
+    console.log('📤 Saving route:', data);
     if (routeId) {
       await apiCall(`/routes/${routeId}`, {
         method: 'PUT',
@@ -2247,6 +2742,7 @@ async function saveRoute(event, routeId) {
     closeModal();
     loadPage('routes');
   } catch (error) {
+    console.error('❌ Route save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -2267,17 +2763,97 @@ async function renderReports(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Đang tải...</p></div>';
   
   try {
-    const overview = await apiCall('/reports/overview');
-    const customerReport = await apiCall('/reports/customers');
-    const containerReport = await apiCall('/reports/containers');
+    const [overview, customerReport, containerReport, orders, vehicles, drivers] = await Promise.all([
+      apiCall('/reports/overview'),
+      apiCall('/reports/customers'),
+      apiCall('/reports/containers'),
+      apiCall('/orders'),
+      apiCall('/vehicles'),
+      apiCall('/drivers')
+    ]);
+    
+    // Phân tích doanh thu theo tháng (6 tháng gần nhất)
+    const monthlyRevenue = {};
+    const monthlyCosts = {};
+    orders.forEach(o => {
+      if (o.order_date) {
+        const month = o.order_date.substring(0, 7); // YYYY-MM
+        if (!monthlyRevenue[month]) {
+          monthlyRevenue[month] = 0;
+          monthlyCosts[month] = 0;
+        }
+        monthlyRevenue[month] += (o.final_amount || o.price || 0);
+      }
+    });
+    
+    // Lấy chi phí theo tháng
+    try {
+      const costs = await apiCall('/costs');
+      costs.forEach(c => {
+        if (c.cost_date) {
+          const month = c.cost_date.substring(0, 7);
+          if (!monthlyCosts[month]) monthlyCosts[month] = 0;
+          monthlyCosts[month] += (c.total_amount || 0);
+        }
+      });
+    } catch (e) {
+      console.error('Error loading costs:', e);
+    }
+    
+    const months = Object.keys(monthlyRevenue).sort().slice(-6);
+    
+    // Phân tích xe theo hiệu suất
+    const vehiclePerformance = {};
+    orders.forEach(o => {
+      if (o.vehicle_id) {
+        if (!vehiclePerformance[o.vehicle_id]) {
+          vehiclePerformance[o.vehicle_id] = {
+            plate: o.vehicle_plate,
+            trips: 0,
+            revenue: 0
+          };
+        }
+        vehiclePerformance[o.vehicle_id].trips += 1;
+        vehiclePerformance[o.vehicle_id].revenue += (o.final_amount || o.price || 0);
+      }
+    });
+    const topVehicles = Object.values(vehiclePerformance)
+      .filter(v => v.plate)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+    
+    // Phân tích tài xế
+    const driverPerformance = {};
+    orders.forEach(o => {
+      if (o.driver_id) {
+        if (!driverPerformance[o.driver_id]) {
+          driverPerformance[o.driver_id] = {
+            name: o.driver_name,
+            trips: 0,
+            revenue: 0
+          };
+        }
+        driverPerformance[o.driver_id].trips += 1;
+        driverPerformance[o.driver_id].revenue += (o.final_amount || o.price || 0);
+      }
+    });
+    const topDrivers = Object.values(driverPerformance)
+      .filter(d => d.name)
+      .sort((a, b) => b.trips - a.trips)
+      .slice(0, 10);
+    
+    // Chi phí trung bình mỗi chuyến
+    const totalTrips = orders.length;
+    const avgCostPerTrip = totalTrips > 0 ? overview.totalCosts / totalTrips : 0;
+    const avgRevenuePerTrip = totalTrips > 0 ? overview.totalRevenue / totalTrips : 0;
     
     container.innerHTML = `
       <div class="page-header">
-        <h1>📈 Báo cáo & Thống kê</h1>
+        <h1>📈 Báo cáo & Thống kê Chi tiết</h1>
       </div>
       
       <div class="filters">
-        <h4>Lọc theo thời gian</h4>
+        <h4>🔍 Lọc theo thời gian</h4>
         <div class="form-row">
           <div class="form-group">
             <label>Từ ngày</label>
@@ -2287,91 +2863,216 @@ async function renderReports(container) {
             <label>Đến ngày</label>
             <input type="date" id="reportToDate">
           </div>
-          <button class="btn btn-primary" onclick="filterReports()">Lọc</button>
+          <button class="btn btn-primary" onclick="filterReports()">🔍 Lọc</button>
+          <button class="btn btn-secondary" onclick="loadPage('reports')">🔄 Reset</button>
         </div>
       </div>
       
-      <h3>Tổng quan</h3>
+      <h3>💰 Tổng quan tài chính</h3>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-label">Tổng đơn hàng</div>
           <div class="stat-value">${overview.totalOrders}</div>
+          <div class="stat-footer">TB: ${formatMoney(avgRevenuePerTrip)}/chuyến</div>
         </div>
         <div class="stat-card success">
           <div class="stat-label">Tổng doanh thu</div>
           <div class="stat-value">${formatMoney(overview.totalRevenue)}</div>
+          <div class="stat-footer">100% doanh thu</div>
         </div>
         <div class="stat-card warning">
           <div class="stat-label">Tổng chi phí</div>
           <div class="stat-value">${formatMoney(overview.totalCosts)}</div>
+          <div class="stat-footer">
+            ${overview.totalRevenue > 0 ? ((overview.totalCosts / overview.totalRevenue) * 100).toFixed(1) : 0}% doanh thu
+          </div>
         </div>
         <div class="stat-card ${overview.profit >= 0 ? 'success' : 'danger'}">
-          <div class="stat-label">Lợi nhuận</div>
+          <div class="stat-label">Lợi nhuận ròng</div>
           <div class="stat-value">${formatMoney(overview.profit)}</div>
+          <div class="stat-footer">
+            Tỷ suất: ${overview.totalRevenue > 0 ? ((overview.profit / overview.totalRevenue) * 100).toFixed(1) : 0}%
+          </div>
         </div>
       </div>
       
-      <div class="card mt-20">
-        <div class="card-header">
-          <h3>Báo cáo theo khách hàng</h3>
+      <div class="stats-grid" style="margin-top: 15px;">
+        <div class="stat-card" style="background: #e3f2fd;">
+          <div class="stat-label">TB Chi phí/Chuyến</div>
+          <div class="stat-value" style="font-size: 20px;">${formatMoney(avgCostPerTrip)}</div>
         </div>
+        <div class="stat-card" style="background: #f3e5f5;">
+          <div class="stat-label">TB Doanh thu/Chuyến</div>
+          <div class="stat-value" style="font-size: 20px;">${formatMoney(avgRevenuePerTrip)}</div>
+        </div>
+        <div class="stat-card" style="background: #fff3e0;">
+          <div class="stat-label">TB Lợi nhuận/Chuyến</div>
+          <div class="stat-value" style="font-size: 20px;">${formatMoney(avgRevenuePerTrip - avgCostPerTrip)}</div>
+        </div>
+        <div class="stat-card" style="background: #e8f5e9;">
+          <div class="stat-label">Số xe hoạt động</div>
+          <div class="stat-value" style="font-size: 20px;">${topVehicles.length}</div>
+        </div>
+      </div>
+      
+      <h3 style="margin-top: 30px;">📊 Doanh thu & Chi phí 6 tháng gần nhất</h3>
+      <div class="card">
         <div class="card-body">
-          <div class="table-container">
-            <table>
+          ${months.length > 0 ? `
+            <table style="width: 100%;">
               <thead>
                 <tr>
-                  <th>Khách hàng</th>
-                  <th>Số đơn</th>
-                  <th>Doanh thu</th>
-                  <th>Đã thanh toán</th>
-                  <th>Công nợ</th>
+                  <th>Tháng</th>
+                  <th class="text-right">Doanh thu</th>
+                  <th class="text-right">Chi phí</th>
+                  <th class="text-right">Lợi nhuận</th>
+                  <th class="text-right">Tỷ suất</th>
                 </tr>
               </thead>
               <tbody>
-                ${customerReport.map(c => `
-                  <tr>
-                    <td><strong>${c.company_name}</strong></td>
-                    <td class="text-center">${c.total_orders || 0}</td>
-                    <td class="text-right">${formatMoney(c.total_revenue || 0)}</td>
-                    <td class="text-right">${formatMoney(c.total_paid || 0)}</td>
-                    <td class="text-right ${c.current_debt > 0 ? 'text-danger' : 'text-success'}">
-                      ${formatMoney(c.current_debt || 0)}
-                    </td>
-                  </tr>
-                `).join('')}
+                ${months.map(month => {
+                  const revenue = monthlyRevenue[month] || 0;
+                  const cost = monthlyCosts[month] || 0;
+                  const profit = revenue - cost;
+                  const margin = revenue > 0 ? ((profit / revenue) * 100).toFixed(1) : 0;
+                  return `
+                    <tr>
+                      <td><strong>${month}</strong></td>
+                      <td class="text-right" style="color: #4caf50; font-weight: bold;">
+                        ${formatMoney(revenue)}
+                      </td>
+                      <td class="text-right" style="color: #ff9800;">
+                        ${formatMoney(cost)}
+                      </td>
+                      <td class="text-right" style="color: ${profit >= 0 ? '#4caf50' : '#f44336'}; font-weight: bold;">
+                        ${formatMoney(profit)}
+                      </td>
+                      <td class="text-right">
+                        <span class="badge ${margin >= 20 ? 'badge-success' : margin >= 10 ? 'badge-warning' : 'badge-danger'}">
+                          ${margin}%
+                        </span>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+                <tr style="background: #f5f5f5; font-weight: bold;">
+                  <td>TỔNG</td>
+                  <td class="text-right" style="color: #4caf50;">
+                    ${formatMoney(months.reduce((sum, m) => sum + (monthlyRevenue[m] || 0), 0))}
+                  </td>
+                  <td class="text-right" style="color: #ff9800;">
+                    ${formatMoney(months.reduce((sum, m) => sum + (monthlyCosts[m] || 0), 0))}
+                  </td>
+                  <td class="text-right" style="color: #4caf50;">
+                    ${formatMoney(months.reduce((sum, m) => sum + ((monthlyRevenue[m] || 0) - (monthlyCosts[m] || 0)), 0))}
+                  </td>
+                  <td></td>
+                </tr>
               </tbody>
             </table>
+          ` : '<div class="empty-state"><p>Chưa có dữ liệu</p></div>'}
+        </div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 30px;">
+        <div class="card">
+          <div class="card-header">
+            <h3>🚛 Top 10 xe theo doanh thu</h3>
+          </div>
+          <div class="card-body">
+            ${topVehicles.length > 0 ? `
+              <table style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>Biển số</th>
+                    <th class="text-center">Số chuyến</th>
+                    <th class="text-right">Doanh thu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${topVehicles.map((v, idx) => `
+                    <tr>
+                      <td><strong>${idx + 1}. ${v.plate}</strong></td>
+                      <td class="text-center">${v.trips}</td>
+                      <td class="text-right" style="color: #4caf50; font-weight: bold;">
+                        ${formatMoney(v.revenue)}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="empty-state"><p>Chưa có dữ liệu</p></div>'}
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h3>👨‍✈️ Top 10 tài xế năng suất</h3>
+          </div>
+          <div class="card-body">
+            ${topDrivers.length > 0 ? `
+              <table style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>Tài xế</th>
+                    <th class="text-center">Số chuyến</th>
+                    <th class="text-right">Doanh thu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${topDrivers.map((d, idx) => `
+                    <tr>
+                      <td><strong>${idx + 1}. ${d.name}</strong></td>
+                      <td class="text-center">${d.trips}</td>
+                      <td class="text-right" style="color: #4caf50; font-weight: bold;">
+                        ${formatMoney(d.revenue)}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="empty-state"><p>Chưa có dữ liệu</p></div>'}
           </div>
         </div>
       </div>
       
       <div class="card mt-20">
         <div class="card-header">
-          <h3>Báo cáo theo Container</h3>
+          <h3>👥 Báo cáo chi tiết theo khách hàng</h3>
         </div>
         <div class="card-body">
           <div class="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Container</th>
-                  <th>Số chuyến</th>
-                  <th>Doanh thu</th>
-                  <th>Chi phí</th>
-                  <th>Lợi nhuận</th>
+                  <th>#</th>
+                  <th>Khách hàng</th>
+                  <th class="text-center">Số đơn</th>
+                  <th class="text-right">Doanh thu</th>
+                  <th class="text-right">Đã thanh toán</th>
+                  <th class="text-right">Công nợ</th>
+                  <th class="text-right">% Thanh toán</th>
                 </tr>
               </thead>
               <tbody>
-                ${containerReport.map(c => {
-                  const profit = (c.total_revenue || 0) - (c.total_cost || 0);
+                ${customerReport.map((c, idx) => {
+                  const paymentPercent = c.total_revenue > 0 ? ((c.total_paid / c.total_revenue) * 100).toFixed(1) : 0;
                   return `
                     <tr>
-                      <td><strong>${c.container_number}</strong></td>
-                      <td class="text-center">${c.total_trips || 0}</td>
-                      <td class="text-right">${formatMoney(c.total_revenue || 0)}</td>
-                      <td class="text-right">${formatMoney(c.total_cost || 0)}</td>
-                      <td class="text-right ${profit >= 0 ? 'text-success' : 'text-danger'}">
-                        ${formatMoney(profit)}
+                      <td>${idx + 1}</td>
+                      <td><strong>${c.name}</strong></td>
+                      <td class="text-center">${c.total_orders || 0}</td>
+                      <td class="text-right" style="font-weight: bold; color: #4caf50;">
+                        ${formatMoney(c.total_revenue || 0)}
+                      </td>
+                      <td class="text-right">${formatMoney(c.total_paid || 0)}</td>
+                      <td class="text-right ${c.current_debt > 0 ? 'text-danger' : 'text-success'}" style="font-weight: bold;">
+                        ${formatMoney(c.current_debt || 0)}
+                      </td>
+                      <td class="text-right">
+                        <span class="badge ${paymentPercent >= 80 ? 'badge-success' : paymentPercent >= 50 ? 'badge-warning' : 'badge-danger'}">
+                          ${paymentPercent}%
+                        </span>
                       </td>
                     </tr>
                   `;
@@ -2384,26 +3085,73 @@ async function renderReports(container) {
       
       <div class="card mt-20">
         <div class="card-header">
-          <h3>📊 Báo cáo chi phí theo loại</h3>
+          <h3>📦 Báo cáo theo Container</h3>
         </div>
         <div class="card-body">
-          <div id="costsByTypeReport" class="loading"><div class="spinner"></div></div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Container</th>
+                  <th class="text-center">Số chuyến</th>
+                  <th class="text-right">Doanh thu</th>
+                  <th class="text-right">Chi phí</th>
+                  <th class="text-right">Lợi nhuận</th>
+                  <th class="text-right">Tỷ suất</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${containerReport.map((c, idx) => {
+                  const profit = (c.total_revenue || 0) - (c.total_cost || 0);
+                  const margin = c.total_revenue > 0 ? ((profit / c.total_revenue) * 100).toFixed(1) : 0;
+                  return `
+                    <tr>
+                      <td>${idx + 1}</td>
+                      <td><strong>${c.container_number}</strong></td>
+                      <td class="text-center">${c.total_trips || 0}</td>
+                      <td class="text-right" style="color: #4caf50; font-weight: bold;">
+                        ${formatMoney(c.total_revenue || 0)}
+                      </td>
+                      <td class="text-right" style="color: #ff9800;">
+                        ${formatMoney(c.total_cost || 0)}
+                      </td>
+                      <td class="text-right ${profit >= 0 ? 'text-success' : 'text-danger'}" style="font-weight: bold;">
+                        ${formatMoney(profit)}
+                      </td>
+                      <td class="text-right">
+                        <span class="badge ${margin >= 20 ? 'badge-success' : margin >= 10 ? 'badge-warning' : 'badge-danger'}">
+                          ${margin}%
+                        </span>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
       
       <div class="card mt-20">
         <div class="card-header">
-          <h3>💰 Lợi nhuận theo đơn hàng</h3>
+          <h3>� Hướng dẫn sử dụng báo cáo</h3>
         </div>
         <div class="card-body">
-          <div id="profitByOrderReport" class="loading"><div class="spinner"></div></div>
+          <ul style="list-style: none; padding: 0;">
+            <li>✅ <strong>Tỷ suất lợi nhuận tốt:</strong> Từ 20% trở lên (màu xanh)</li>
+            <li>⚠️ <strong>Tỷ suất khá:</strong> Từ 10-20% (màu vàng)</li>
+            <li>❌ <strong>Tỷ suất thấp:</strong> Dưới 10% (màu đỏ)</li>
+            <li>💡 <strong>Công nợ an toàn:</strong> Tỷ lệ thanh toán trên 80%</li>
+            <li>📊 <strong>Chi phí hợp lý:</strong> Không quá 60% doanh thu</li>
+          </ul>
         </div>
       </div>
     `;
     
-    // Load detailed reports
+    // Load additional reports asynchronously
     loadCostsByTypeReport();
-    loadProfitByOrderReport();
+    
   } catch (error) {
     showError(container, 'Lỗi tải báo cáo: ' + error.message);
   }
@@ -2411,181 +3159,99 @@ async function renderReports(container) {
 
 async function loadCostsByTypeReport() {
   try {
-    const costsByType = await apiCall('/reports/costs-by-type');
+    const costs = await apiCall('/costs');
+    const costsByType = {};
+    
+    costs.forEach(c => {
+      const type = c.cost_type || 'Khác';
+      if (!costsByType[type]) {
+        costsByType[type] = {
+          count: 0,
+          total: 0
+        };
+      }
+      costsByType[type].count += 1;
+      costsByType[type].total += (c.total_amount || 0);
+    });
+    
+    const costTypes = Object.entries(costsByType)
+      .map(([type, data]) => ({ type, ...data }))
+      .sort((a, b) => b.total - a.total);
+    
+    const totalCosts = costTypes.reduce((sum, c) => sum + c.total, 0);
+    
     const container = document.getElementById('costsByTypeReport');
-    
-    if (!costsByType || costsByType.length === 0) {
-      container.innerHTML = '<p class="text-muted">Chưa có dữ liệu chi phí</p>';
-      return;
-    }
-    
-    const totalFuel = costsByType.reduce((sum, v) => sum + (v.fuel_cost || 0), 0);
-    const totalToll = costsByType.reduce((sum, v) => sum + (v.toll_cost || 0), 0);
-    const totalOther = costsByType.reduce((sum, v) => sum + (v.other_cost || 0), 0);
-    const grandTotal = costsByType.reduce((sum, v) => sum + (v.total_cost || 0), 0);
-    
-    container.innerHTML = `
-      <div class="table-container">
-        <table>
+    if (container) {
+      container.innerHTML = costTypes.length > 0 ? `
+        <table style="width: 100%;">
           <thead>
             <tr>
-              <th>Biển số xe</th>
-              <th>Số chuyến</th>
-              <th>Dầu xe</th>
-              <th>Phí cầu đường</th>
-              <th>Chi phí khác</th>
-              <th>Tổng chi phí</th>
-              <th>Tỷ lệ</th>
+              <th>Loại chi phí</th>
+              <th class="text-center">Số lần</th>
+              <th class="text-right">Tổng tiền</th>
+              <th class="text-right">% Tổng CP</th>
             </tr>
           </thead>
           <tbody>
-            ${costsByType.map(v => {
-              const percentage = grandTotal > 0 ? ((v.total_cost / grandTotal) * 100).toFixed(1) : 0;
+            ${costTypes.map(c => {
+              const percent = totalCosts > 0 ? ((c.total / totalCosts) * 100).toFixed(1) : 0;
               return `
                 <tr>
-                  <td><strong>${v.vehicle_number || '-'}</strong></td>
-                  <td class="text-center">${v.trip_count || 0}</td>
-                  <td class="text-right">${formatMoney(v.fuel_cost || 0)}</td>
-                  <td class="text-right">${formatMoney(v.toll_cost || 0)}</td>
-                  <td class="text-right">${formatMoney(v.other_cost || 0)}</td>
-                  <td class="text-right"><strong>${formatMoney(v.total_cost || 0)}</strong></td>
-                  <td class="text-right">${percentage}%</td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <th>Tổng cộng</th>
-              <th class="text-center">${costsByType.reduce((sum, v) => sum + (v.trip_count || 0), 0)}</th>
-              <th class="text-right">${formatMoney(totalFuel)}</th>
-              <th class="text-right">${formatMoney(totalToll)}</th>
-              <th class="text-right">${formatMoney(totalOther)}</th>
-              <th class="text-right"><strong>${formatMoney(grandTotal)}</strong></th>
-              <th class="text-right">100%</th>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    `;
-  } catch (error) {
-    document.getElementById('costsByTypeReport').innerHTML = 
-      `<p class="text-danger">Lỗi tải báo cáo: ${error.message}</p>`;
-  }
-}
-
-async function loadProfitByOrderReport() {
-  try {
-    const profitByOrder = await apiCall('/reports/profit-by-order');
-    const container = document.getElementById('profitByOrderReport');
-    
-    if (!profitByOrder || profitByOrder.length === 0) {
-      container.innerHTML = '<p class="text-muted">Chưa có dữ liệu</p>';
-      return;
-    }
-    
-    const totalRevenue = profitByOrder.reduce((sum, v) => sum + (v.revenue || 0), 0);
-    const totalCosts = profitByOrder.reduce((sum, v) => sum + (v.total_costs || 0), 0);
-    const totalProfit = totalRevenue - totalCosts;
-    
-    container.innerHTML = `
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Biển số xe</th>
-              <th>Số chuyến</th>
-              <th>Doanh thu</th>
-              <th>Chi phí</th>
-              <th>Lợi nhuận</th>
-              <th>Tỷ suất LN</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${profitByOrder.map(v => {
-              const profit = (v.revenue || 0) - (v.total_costs || 0);
-              const profitMargin = v.revenue > 0 ? 
-                ((profit / v.revenue) * 100).toFixed(1) : 0;
-              return `
-                <tr>
-                  <td><strong>${v.vehicle_number || '-'}</strong></td>
-                  <td class="text-center">${v.total_trips || 0}</td>
-                  <td class="text-right">${formatMoney(v.revenue || 0)}</td>
-                  <td class="text-right">${formatMoney(v.total_costs || 0)}</td>
-                  <td class="text-right ${profit >= 0 ? 'text-success' : 'text-danger'}">
-                    ${formatMoney(profit)}
+                  <td><strong>${c.type}</strong></td>
+                  <td class="text-center">${c.count}</td>
+                  <td class="text-right" style="color: #ff9800; font-weight: bold;">
+                    ${formatMoney(c.total)}
                   </td>
-                  <td class="text-right ${profit >= 0 ? 'text-success' : 'text-danger'}">
-                    ${profitMargin}%
+                  <td class="text-right">
+                    <span class="badge ${percent > 30 ? 'badge-danger' : percent > 15 ? 'badge-warning' : 'badge-secondary'}">
+                      ${percent}%
+                    </span>
                   </td>
                 </tr>
               `;
             }).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <th>Tổng cộng</th>
-              <th class="text-center">${profitByOrder.reduce((sum, v) => sum + (v.total_trips || 0), 0)}</th>
-              <th class="text-right">${formatMoney(totalRevenue)}</th>
-              <th class="text-right">${formatMoney(totalCosts)}</th>
-              <th class="text-right ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">
-                ${formatMoney(totalProfit)}
-              </th>
-              <th class="text-right">
-                ${totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0}%
-              </th>
+            <tr style="background: #f5f5f5; font-weight: bold;">
+              <td>TỔNG</td>
+              <td class="text-center">${costTypes.reduce((sum, c) => sum + c.count, 0)}</td>
+              <td class="text-right" style="color: #ff9800;">
+                ${formatMoney(totalCosts)}
+              </td>
+              <td class="text-right">100%</td>
             </tr>
-          </tfoot>
+          </tbody>
         </table>
-      </div>
-    `;
-  } catch (error) {
-    document.getElementById('profitByOrderReport').innerHTML = 
-      `<p class="text-danger">Lỗi tải báo cáo: ${error.message}</p>`;
+      ` : '<div class="empty-state"><p>Chưa có dữ liệu chi phí</p></div>';
+    }
+  } catch (e) {
+    console.error('Error loading costs by type:', e);
+    const container = document.getElementById('costsByTypeReport');
+    if (container) {
+      container.innerHTML = '<div class="empty-state"><p>Không thể tải dữ liệu</p></div>';
+    }
   }
 }
 
-async function filterReports() {
+window.filterReports = async function() {
   const fromDate = document.getElementById('reportFromDate').value;
   const toDate = document.getElementById('reportToDate').value;
   
-  const query = new URLSearchParams();
-  if (fromDate) query.append('from_date', fromDate);
-  if (toDate) query.append('to_date', toDate);
+  const params = new URLSearchParams();
+  if (fromDate) params.append('from', fromDate);
+  if (toDate) params.append('to', toDate);
   
   try {
-    const overview = await apiCall(`/reports/overview?${query.toString()}`);
+    const overview = await apiCall(`/reports/overview?${params.toString()}`);
+    const customerReport = await apiCall(`/reports/customers?${params.toString()}`);
+    const containerReport = await apiCall(`/reports/containers?${params.toString()}`);
     
-    // Update stats
-    document.querySelector('.stats-grid').innerHTML = `
-      <div class="stat-card">
-        <div class="stat-label">Tổng đơn hàng</div>
-        <div class="stat-value">${overview.totalOrders}</div>
-      </div>
-      <div class="stat-card success">
-        <div class="stat-label">Tổng doanh thu</div>
-        <div class="stat-value">${formatMoney(overview.totalRevenue)}</div>
-      </div>
-      <div class="stat-card warning">
-        <div class="stat-label">Tổng chi phí</div>
-        <div class="stat-value">${formatMoney(overview.totalCosts)}</div>
-      </div>
-      <div class="stat-card ${overview.profit >= 0 ? 'success' : 'danger'}">
-        <div class="stat-label">Lợi nhuận</div>
-        <div class="stat-value">${formatMoney(overview.profit)}</div>
-      </div>
-    `;
+    // Reload the reports page with filtered data
+    loadPage('reports');
   } catch (error) {
     alert('Lỗi lọc báo cáo: ' + error.message);
   }
-}
+};
 
 // ==================== UTILITY FUNCTIONS ====================
-function closeModal(event) {
-  if (event && event.target !== event.currentTarget) return;
-  document.getElementById('modalContainer').innerHTML = '';
-}
-
 function formatMoney(amount) {
   if (!amount && amount !== 0) return '0';
   return new Intl.NumberFormat('vi-VN').format(amount);
@@ -2767,7 +3433,7 @@ async function renderCustomerStatement(container) {
             <label>Chọn khách hàng</label>
             <select id="statementCustomer">
               <option value="">-- Chọn khách hàng --</option>
-              ${customers.map(c => `<option value="${c.id}">${c.company_name || c.contact_name || 'Không rõ tên'}</option>`).join('')}
+              ${customers.map(c => `<option value="${c.id}">${c.name || c.contact_person || 'Không rõ tên'}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">
@@ -2831,10 +3497,10 @@ async function generateStatement() {
           <button class="btn btn-primary" onclick="exportStatement(${customerId}, '${fromDate}', '${toDate}')">
             📄 Xuất PDF
           </button>
-          <button class="btn btn-success" onclick="exportStatementExcel('${customer.company_name}', '${fromDate}', '${toDate}')">
+          <button class="btn btn-success" onclick="exportStatementExcel('${customer.name}', '${fromDate}', '${toDate}')">
             📊 Xuất Excel
           </button>
-          <button class="btn btn-info" onclick="exportStatementCSV('${customer.company_name}', '${fromDate}', '${toDate}')">
+          <button class="btn btn-info" onclick="exportStatementCSV('${customer.name}', '${fromDate}', '${toDate}')">
             📋 Xuất CSV
           </button>
           <button class="btn btn-secondary" onclick="printStatement()">
@@ -2850,7 +3516,7 @@ async function generateStatement() {
             <h2 style="margin: 10px 0 5px 0; font-weight: bold; font-size: 14px;">BẢNG KÊ ĐỐI SOÁT VÀ ĐỀ NGHỊ THANH TOÁN PHÍ VẬN CHUYỂN</h2>
             <p style="margin: 3px 0; font-size: 11px;">Từ ngày ${formatDate(fromDate)} đến ngày ${formatDate(toDate)}</p>
             <p style="margin: 3px 0; font-size: 11px;">Đính kèm hóa đơn số: ...... ngày ...... tháng ...... năm ${new Date(toDate).getFullYear()}</p>
-            <p style="margin: 3px 0 2px 0; font-size: 11px;">Đơn vị thanh toán: <span style="text-transform: uppercase; font-weight: bold;">${customer.company_name || customer.contact_name}</span></p>
+            <p style="margin: 3px 0 2px 0; font-size: 11px;">Đơn vị thanh toán: <span style="text-transform: uppercase; font-weight: bold;">${customer.name || customer.contact_person}</span></p>
           </div>
           
           <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 10px; border: 1px solid #000; margin-top: 5px;">
@@ -2920,18 +3586,18 @@ async function generateStatement() {
           
           <div class="statement-footer" style="margin-top: 15px;">
             <p style="font-size: 11px; margin-bottom: 5px;"><strong>Bằng chữ:</strong> ${numberToWords(finalTotal)} đồng</p>
-            <p style="font-style: italic; font-size: 11px; margin-bottom: 10px;">Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: 0500780826263 - TRẦN NGỌC TIẾN - Ngân hàng: Sacombank</p>
+            <p style="font-style: italic; font-size: 11px; margin-bottom: 10px;">Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: 0500780826263 - TRẦN NGỌC TIÊN - Ngân hàng: Sacombank</p>
             
             <div class="signature-section" style="display: flex; justify-content: space-between; margin-top: 20px;">
               <div class="signature" style="text-align: center; width: 45%;">
-                <p style="margin-bottom: 5px;"><strong>${(customer.company_name || '').toUpperCase()}</strong></p>
+                <p style="margin-bottom: 5px;"><strong>${(customer.name || '').toUpperCase()}</strong></p>
                 <p style="margin: 50px 0 5px 0; font-style: italic; font-size: 10px;"></p>
-                <p style="margin-top: 7px;"><strong>${(customer.contact_name || '').toUpperCase()}</strong></p>
+                <p style="margin-top: 7px;"><strong>${(customer.contact_person || '').toUpperCase()}</strong></p>
               </div>
               <div class="signature" style="text-align: center; width: 45%;">
                 <p style="margin-bottom: 5px;"><strong>CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH TRANSPORT</strong></p>
                 <p style="margin: 50px 0 5px 0; font-style: italic; font-size: 10px;"></p>
-                <p style="margin-top: 5px;"><strong>TRẦN NGỌC TIẾN</strong></p>
+                <p style="margin-top: 5px;"><strong>TRẦN NGỌC TIÊN</strong></p>
               </div>
             </div>
           </div>
@@ -3538,7 +4204,7 @@ async function exportStatementExcel(customerName, fromDate, toDate) {
         <tr><td colspan="12" style="font-weight: bold; text-align: center; font-size: 12pt;">BẢNG KÊ ĐỐI SOÁT VÀ ĐỀ NGHỊ THANH TOÁN PHÍ VẬN CHUYỂN</td></tr>
         <tr><td colspan="12" style="text-align: center;">Từ ngày ${formatDate(fromDate)} đến ngày ${formatDate(toDate)}</td></tr>
         <tr><td colspan="12" style="text-align: center;">Đính kèm hóa đơn số: ...... ngày ...... tháng ...... năm ${new Date(toDate).getFullYear()}</td></tr>
-        <tr><td colspan="12" style="text-align: center;">Đơn vị thanh toán: <strong>${customer.company_name || customer.contact_name}</strong></td></tr>
+        <tr><td colspan="12" style="text-align: center;">Đơn vị thanh toán: <strong>${customer.name || customer.contact_person}</strong></td></tr>
         <tr><td colspan="12"></td></tr>
         <tr style="font-weight: bold;">
           <td>STT</td><td>Số Cont</td><td>Ngày bốc</td><td>Hàng hóa</td><td>Nơi đóng hàng</td><td>Điểm trung chuyển</td><td>Nơi trả hàng</td><td>Cước</td><td>Néo xe</td><td>Chi hộ</td><td>Tổng Cộng</td><td>Ghi chú</td>
@@ -3597,16 +4263,16 @@ async function exportStatementExcel(customerName, fromDate, toDate) {
           <td></td>
         </tr>
         <tr><td colspan="12"></td></tr>
-        <tr><td colspan="12" style="font-style: italic; font-size: 10pt;">Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: 0500780826263 - TRẦN NGỌC TIẾN - Ngân hàng: Sacombank</td></tr>
+        <tr><td colspan="12" style="font-style: italic; font-size: 10pt;">Yêu cầu Quý công ty thanh toán công nợ theo số tài khoản: 0500780826263 - TRẦN NGỌC TIÊN - Ngân hàng: Sacombank</td></tr>
         <tr><td colspan="12"></td></tr>
         <tr>
-          <td colspan="6" style="text-align: center; font-weight: bold;">CTY CỔ PHẦN PROSHIP</td>
+          <td colspan="6" style="text-align: center; font-weight: bold;">${(customer.name || '').toUpperCase()}</td>
           <td colspan="6" style="text-align: center; font-weight: bold;">CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH TRANSPORT</td>
         </tr>
         <tr><td colspan="6" style="height: 60px;"></td><td colspan="6" style="height: 60px;"></td></tr>
         <tr>
-          <td colspan="6" style="text-align: center; font-weight: bold;">NGUYỄN DUY TOÀN</td>
-          <td colspan="6" style="text-align: center; font-weight: bold;">TRẦN NGỌC TIẾN</td>
+          <td colspan="6" style="text-align: center; font-weight: bold;">${(customer.contact_person || '').toUpperCase()}</td>
+          <td colspan="6" style="text-align: center; font-weight: bold;">TRẦN NGỌC TIÊN</td>
         </tr>
       </table>
     </body>
@@ -4200,4 +4866,74 @@ window.showAuditDetail = function(logId, oldValue, newValue) {
   `;
   document.body.appendChild(modal);
 }
+
+// ==================== EXPORT TO WINDOW SCOPE ====================
+// Export các functions để có thể gọi từ onclick="..." trong HTML
+window.logout = logout;
+window.loadPage = loadPage;
+window.closeModal = closeModal;
+window.setupNavigation = setupNavigation;
+
+// Utility functions
+window.handleImageUpload = handleImageUpload;
+
+// Order functions
+window.showOrderModal = showOrderModal;
+window.saveOrder = saveOrder;
+window.viewOrderDetail = viewOrderDetail;
+window.deleteOrder = deleteOrder;
+window.showCostModal = showCostModal;
+window.saveCost = saveCost;
+window.deleteCost = deleteCost;
+window.showPaymentModal = showPaymentModal;
+window.savePayment = savePayment;
+window.deletePayment = deletePayment;
+window.showAdvanceModal = showAdvanceModal;
+window.saveAdvance = saveAdvance;
+window.settleAdvance = settleAdvance;
+window.deleteAdvance = deleteAdvance;
+window.exportWaybill = exportWaybill;
+window.filterOrders = filterOrders;
+window.quickUpdateOrder = quickUpdateOrder;
+window.toggleFuelFields = toggleFuelFields;
+window.calculateFuelAmount = calculateFuelAmount;
+window.previewInvoice = previewInvoice;
+
+// Customer functions
+window.showCustomerModal = showCustomerModal;
+window.saveCustomer = saveCustomer;
+window.deleteCustomer = deleteCustomer;
+
+// Driver functions
+window.showDriverModal = showDriverModal;
+window.saveDriver = saveDriver;
+window.deleteDriver = deleteDriver;
+
+// Vehicle functions
+window.showVehicleModal = showVehicleModal;
+window.saveVehicle = saveVehicle;
+window.deleteVehicle = deleteVehicle;
+
+// Container functions
+window.showContainerModal = showContainerModal;
+window.saveContainer = saveContainer;
+window.deleteContainer = deleteContainer;
+
+// Route functions
+window.showRouteModal = showRouteModal;
+window.saveRoute = saveRoute;
+window.deleteRoute = deleteRoute;
+
+// User functions (if defined)
+if (typeof showUserModal !== 'undefined') window.showUserModal = showUserModal;
+if (typeof saveUser !== 'undefined') window.saveUser = saveUser;
+if (typeof deleteUser !== 'undefined') window.deleteUser = deleteUser;
+
+// Utility functions
+window.closeModal = closeModal;
+window.formatMoney = formatMoney;
+window.formatDate = formatDate;
+window.formatDateForInput = formatDateForInput;
+
+console.log('✅ App.js loaded - All functions exported to window scope');
 

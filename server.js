@@ -340,14 +340,22 @@ app.get('/api/drivers/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/drivers', authenticateToken, async (req, res) => {
+app.post('/api/drivers', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
-    const { name, phone, license_number, license_expiry, id_number, address, status, notes } = req.body;
+    const { 
+      name, phone, license_number, license_expiry, id_number, address, status, notes,
+      birth_date, id_card_image, license_image, license_type, hire_date, base_salary
+    } = req.body;
 
     const result = await dbRun(
-      `INSERT INTO drivers (name, phone, license_number, license_expiry, id_number, address, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, phone, license_number, license_expiry, id_number, address, status || 'active', notes]
+      `INSERT INTO drivers (
+        name, phone, license_number, license_expiry, id_number, address, status, notes,
+        birth_date, id_card_image, license_image, license_type, hire_date, base_salary
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name, phone, license_number, license_expiry, id_number, address, status || 'active', notes,
+        birth_date, id_card_image, license_image, license_type, hire_date, base_salary || 0
+      ]
     );
 
     const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [result.lastID]);
@@ -372,18 +380,26 @@ app.post('/api/drivers', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/drivers/:id', authenticateToken, async (req, res) => {
+app.put('/api/drivers/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
-    const { name, phone, license_number, license_expiry, id_number, address, status, notes } = req.body;
+    const { 
+      name, phone, license_number, license_expiry, id_number, address, status, notes,
+      birth_date, id_card_image, license_image, license_type, hire_date, base_salary
+    } = req.body;
 
     // Get old data
     const oldDriver = await dbGet('SELECT * FROM drivers WHERE id = ?', [req.params.id]);
 
     await dbRun(
       `UPDATE drivers 
-       SET name = ?, phone = ?, license_number = ?, license_expiry = ?, id_number = ?, address = ?, status = ?, notes = ?
+       SET name = ?, phone = ?, license_number = ?, license_expiry = ?, id_number = ?, address = ?, status = ?, notes = ?,
+           birth_date = ?, id_card_image = ?, license_image = ?, license_type = ?, hire_date = ?, base_salary = ?
        WHERE id = ?`,
-      [name, phone, license_number, license_expiry, id_number, address, status, notes, req.params.id]
+      [
+        name, phone, license_number, license_expiry, id_number, address, status, notes,
+        birth_date, id_card_image, license_image, license_type, hire_date, base_salary,
+        req.params.id
+      ]
     );
 
     const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [req.params.id]);
@@ -408,7 +424,7 @@ app.put('/api/drivers/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/drivers/:id', authenticateToken, async (req, res) => {
+app.delete('/api/drivers/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old data
     const oldDriver = await dbGet('SELECT * FROM drivers WHERE id = ?', [req.params.id]);
@@ -449,14 +465,25 @@ app.get('/api/vehicles', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/vehicles', authenticateToken, async (req, res) => {
+app.post('/api/vehicles', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
-    const { plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, capacity, status, registration_expiry, insurance_expiry, notes } = req.body;
+    const { 
+      plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, 
+      capacity, status, registration_expiry, insurance_expiry, notes,
+      vin_number, engine_number, color, ownership, purchase_price, purchase_date, current_odometer
+    } = req.body;
 
     const result = await dbRun(
-      `INSERT INTO vehicles (plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, capacity, status, registration_expiry, insurance_expiry, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, capacity, status || 'available', registration_expiry, insurance_expiry, notes]
+      `INSERT INTO vehicles (
+        plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, 
+        capacity, status, registration_expiry, insurance_expiry, notes,
+        vin_number, engine_number, color, ownership, purchase_price, purchase_date, current_odometer
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, 
+        capacity, status || 'available', registration_expiry, insurance_expiry, notes,
+        vin_number, engine_number, color, ownership, purchase_price, purchase_date, current_odometer
+      ]
     );
 
     const vehicle = await dbGet('SELECT * FROM vehicles WHERE id = ?', [result.lastID]);
@@ -481,18 +508,30 @@ app.post('/api/vehicles', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/vehicles/:id', authenticateToken, async (req, res) => {
+app.put('/api/vehicles/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
-    const { plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, capacity, status, registration_expiry, insurance_expiry, notes } = req.body;
+    const { 
+      plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, 
+      capacity, status, registration_expiry, insurance_expiry, notes,
+      vin_number, engine_number, color, ownership, purchase_price, purchase_date, current_odometer
+    } = req.body;
 
     // Get old data
     const oldVehicle = await dbGet('SELECT * FROM vehicles WHERE id = ?', [req.params.id]);
 
     await dbRun(
       `UPDATE vehicles 
-       SET plate_number = ?, vehicle_type = ?, brand = ?, model = ?, year = ?, engine_power = ?, fuel_consumption_empty = ?, fuel_consumption_loaded = ?, capacity = ?, status = ?, registration_expiry = ?, insurance_expiry = ?, notes = ?
+       SET plate_number = ?, vehicle_type = ?, brand = ?, model = ?, year = ?, engine_power = ?, 
+           fuel_consumption_empty = ?, fuel_consumption_loaded = ?, capacity = ?, status = ?, 
+           registration_expiry = ?, insurance_expiry = ?, notes = ?,
+           vin_number = ?, engine_number = ?, color = ?, ownership = ?, purchase_price = ?, purchase_date = ?, current_odometer = ?
        WHERE id = ?`,
-      [plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, capacity, status, registration_expiry, insurance_expiry, notes, req.params.id]
+      [
+        plate_number, vehicle_type, brand, model, year, engine_power, fuel_consumption_empty, fuel_consumption_loaded, 
+        capacity, status, registration_expiry, insurance_expiry, notes,
+        vin_number, engine_number, color, ownership, purchase_price, purchase_date, current_odometer,
+        req.params.id
+      ]
     );
 
     const vehicle = await dbGet('SELECT * FROM vehicles WHERE id = ?', [req.params.id]);
@@ -517,7 +556,7 @@ app.put('/api/vehicles/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/vehicles/:id', authenticateToken, async (req, res) => {
+app.delete('/api/vehicles/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old data
     const oldVehicle = await dbGet('SELECT * FROM vehicles WHERE id = ?', [req.params.id]);
@@ -558,7 +597,7 @@ app.get('/api/containers', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/containers/:id', authenticateToken, async (req, res) => {
+app.put('/api/containers/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { status, current_location, notes } = req.body;
 
@@ -606,7 +645,7 @@ app.get('/api/routes', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/routes', authenticateToken, async (req, res) => {
+app.post('/api/routes', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { route_name, origin, destination, distance_km, estimated_hours, notes } = req.body;
 
@@ -638,7 +677,7 @@ app.post('/api/routes', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/routes/:id', authenticateToken, async (req, res) => {
+app.put('/api/routes/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { route_name, origin, destination, distance_km, estimated_hours, notes } = req.body;
 
@@ -674,7 +713,7 @@ app.put('/api/routes/:id', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/routes/:id', authenticateToken, async (req, res) => {
+app.delete('/api/routes/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old data
     const oldRoute = await dbGet('SELECT * FROM routes WHERE id = ?', [req.params.id]);
@@ -711,7 +750,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     
     let query = `
       SELECT o.*, 
-        c.company_name as customer_name,
+        c.name as customer_name,
         d.name as driver_name,
         v.plate_number as vehicle_plate,
         cn.container_number,
@@ -764,7 +803,7 @@ app.get('/api/orders/:id', authenticateToken, async (req, res) => {
   try {
     const order = await dbGet(`
       SELECT o.*, 
-        c.company_name as customer_name, c.phone as customer_phone, c.address as customer_address,
+        c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
         d.name as driver_name, d.phone as driver_phone,
         v.plate_number as vehicle_plate,
         cn.container_number,
@@ -801,25 +840,38 @@ app.post('/api/orders', authenticateToken, requireRole('admin', 'dispatcher'), a
       customer_id, route_id, container_id, vehicle_id, driver_id,
       order_date, pickup_date, delivery_date,
       pickup_location, intermediate_point, delivery_location,
-      cargo_description, quantity, weight, price, neo_xe, chi_ho, status, notes
+      cargo_description, quantity, weight, price, neo_xe, chi_ho, status, notes,
+      booking_number, bill_of_lading, seal_number, cargo_type
     } = req.body;
 
     // Tạo mã đơn hàng tự động
     const orderCode = 'ORD' + Date.now().toString().slice(-8);
+    
+    // Tính final_amount (bao gồm VAT 10%)
+    const subtotal = (price || 0) + (neo_xe || 0) + (chi_ho || 0);
+    const final_amount = req.body.final_amount || Math.round(subtotal * 1.1);
 
     const result = await dbRun(
       `INSERT INTO orders (
         order_code, customer_id, route_id, container_id, vehicle_id, driver_id,
         order_date, pickup_date, delivery_date,
         pickup_location, intermediate_point, delivery_location,
-        cargo_description, quantity, weight, price, neo_xe, chi_ho, status, notes, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        cargo_description, quantity, weight, price, neo_xe, chi_ho, final_amount, status, notes, created_by,
+        booking_number, bill_of_lading, seal_number, cargo_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderCode, customer_id, route_id, container_id, vehicle_id, driver_id,
         order_date, pickup_date, delivery_date,
         pickup_location, intermediate_point, delivery_location,
-        cargo_description, quantity, weight, price, neo_xe || 0, chi_ho || 0, status || 'pending', notes, req.user.id
+        cargo_description, quantity, weight, price, neo_xe || 0, chi_ho || 0, final_amount, status || 'pending', notes, req.user.id,
+        booking_number, bill_of_lading, seal_number, cargo_type
       ]
+    );
+    
+    // Cập nhật công nợ khách hàng
+    await dbRun(
+      'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+      [final_amount, customer_id]
     );
 
     const order = await dbGet('SELECT * FROM orders WHERE id = ?', [result.lastID]);
@@ -851,12 +903,37 @@ app.put('/api/orders/:id', authenticateToken, requireRole('admin', 'dispatcher')
     // Get old data before update
     const oldOrder = await dbGet('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     
+    // Nếu có thay đổi giá, tính lại final_amount và cập nhật công nợ
+    if (req.body.price || req.body.neo_xe || req.body.chi_ho || req.body.final_amount) {
+      const newPrice = req.body.price !== undefined ? req.body.price : oldOrder.price;
+      const newNeoXe = req.body.neo_xe !== undefined ? req.body.neo_xe : (oldOrder.neo_xe || 0);
+      const newChiHo = req.body.chi_ho !== undefined ? req.body.chi_ho : (oldOrder.chi_ho || 0);
+      
+      if (!req.body.final_amount) {
+        const subtotal = newPrice + newNeoXe + newChiHo;
+        req.body.final_amount = Math.round(subtotal * 1.1);
+      }
+      
+      // Cập nhật công nợ: Trừ số cũ, cộng số mới
+      const oldFinalAmount = oldOrder.final_amount || 0;
+      const newFinalAmount = req.body.final_amount;
+      const debtDiff = newFinalAmount - oldFinalAmount;
+      
+      if (debtDiff !== 0) {
+        await dbRun(
+          'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+          [debtDiff, oldOrder.customer_id]
+        );
+      }
+    }
+    
     // Build dynamic UPDATE query based on fields provided
     const allowedFields = [
       'customer_id', 'route_id', 'container_id', 'vehicle_id', 'driver_id',
       'order_date', 'pickup_date', 'delivery_date',
       'pickup_location', 'intermediate_point', 'delivery_location',
-      'cargo_description', 'quantity', 'weight', 'price', 'neo_xe', 'chi_ho', 'status', 'notes'
+      'cargo_description', 'quantity', 'weight', 'price', 'neo_xe', 'chi_ho', 'final_amount', 'status', 'notes',
+      'booking_number', 'bill_of_lading', 'seal_number', 'cargo_type'
     ];
     
     const updates = [];
@@ -908,6 +985,14 @@ app.delete('/api/orders/:id', authenticateToken, requireRole('admin'), async (re
     // Lấy thông tin đơn hàng trước khi xóa
     const order = await dbGet('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     
+    // Trừ công nợ khách hàng
+    if (order && order.final_amount) {
+      await dbRun(
+        'UPDATE customers SET current_debt = COALESCE(current_debt, 0) - ? WHERE id = ?',
+        [order.final_amount, order.customer_id]
+      );
+    }
+    
     // Xóa các bản ghi liên quan
     await dbRun('DELETE FROM trip_costs WHERE order_id = ?', [req.params.id]);
     await dbRun('DELETE FROM payments WHERE order_id = ?', [req.params.id]);
@@ -940,7 +1025,7 @@ app.get('/api/orders/:orderId/costs', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/orders/:orderId/costs', authenticateToken, async (req, res) => {
+app.post('/api/orders/:orderId/costs', authenticateToken, requireRole('admin', 'dispatcher', 'accountant'), async (req, res) => {
   try {
     const { cost_type, amount, fuel_liters, fuel_price_per_liter, distance_km, receipt_number, invoice_file, cost_date, notes } = req.body;
 
@@ -972,7 +1057,7 @@ app.post('/api/orders/:orderId/costs', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/costs/:id', authenticateToken, async (req, res) => {
+app.delete('/api/costs/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     // Get old cost data before deletion
     const oldCost = await dbGet('SELECT * FROM trip_costs WHERE id = ?', [req.params.id]);
@@ -996,6 +1081,52 @@ app.delete('/api/costs/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error deleting cost:', error);
     res.status(500).json({ error: 'Lỗi xóa chi phí' });
+  }
+});
+
+// Get all costs (for reports/dashboard)
+app.get('/api/costs', authenticateToken, async (req, res) => {
+  try {
+    const { from_date, to_date, vehicle_id, order_id } = req.query;
+    
+    let query = `
+      SELECT 
+        tc.*,
+        o.order_code,
+        v.plate_number,
+        tc.amount as total_amount
+      FROM trip_costs tc
+      LEFT JOIN orders o ON tc.order_id = o.id
+      LEFT JOIN vehicles v ON o.vehicle_id = v.id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    if (from_date) {
+      query += ' AND tc.cost_date >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      query += ' AND tc.cost_date <= ?';
+      params.push(to_date);
+    }
+    if (vehicle_id) {
+      query += ' AND o.vehicle_id = ?';
+      params.push(vehicle_id);
+    }
+    if (order_id) {
+      query += ' AND tc.order_id = ?';
+      params.push(order_id);
+    }
+    
+    query += ' ORDER BY tc.cost_date DESC, tc.id DESC';
+    
+    const costs = await dbAll(query, params);
+    res.json(costs);
+  } catch (error) {
+    console.error('Error fetching costs:', error);
+    res.status(500).json({ error: 'Lỗi lấy danh sách chi phí' });
   }
 });
 
@@ -1216,7 +1347,7 @@ app.get('/api/drivers/:driverId/advances', authenticateToken, async (req, res) =
 });
 
 // Tạo tạm ứng mới
-app.post('/api/orders/:orderId/advances', authenticateToken, async (req, res) => {
+app.post('/api/orders/:orderId/advances', authenticateToken, requireRole('admin', 'dispatcher', 'accountant'), async (req, res) => {
   try {
     const { driver_id, advance_date, amount, notes } = req.body;
 
@@ -1249,7 +1380,7 @@ app.post('/api/orders/:orderId/advances', authenticateToken, async (req, res) =>
 });
 
 // Quyết toán tạm ứng
-app.put('/api/advances/:id/settle', authenticateToken, async (req, res) => {
+app.put('/api/advances/:id/settle', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
   try {
     const { settlement_date } = req.body;
     
@@ -1286,7 +1417,7 @@ app.put('/api/advances/:id/settle', authenticateToken, async (req, res) => {
 });
 
 // Xóa tạm ứng
-app.delete('/api/advances/:id', authenticateToken, async (req, res) => {
+app.delete('/api/advances/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old data
     const oldAdvance = await dbGet('SELECT * FROM driver_advances WHERE id = ?', [req.params.id]);
@@ -1353,7 +1484,7 @@ app.get('/api/orders/:orderId/documents', authenticateToken, async (req, res) =>
 });
 
 // Upload document (base64)
-app.post('/api/orders/:orderId/documents', authenticateToken, async (req, res) => {
+app.post('/api/orders/:orderId/documents', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { document_type, file_name, file_data } = req.body;
     
@@ -1387,7 +1518,7 @@ app.post('/api/orders/:orderId/documents', authenticateToken, async (req, res) =
 });
 
 // Xóa document
-app.delete('/api/documents/:id', authenticateToken, async (req, res) => {
+app.delete('/api/documents/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old data
     const oldDocument = await dbGet('SELECT id, order_id, document_type, file_name, uploaded_at FROM documents WHERE id = ?', [req.params.id]);
@@ -1433,7 +1564,7 @@ app.get('/api/documents/:id/download', authenticateToken, async (req, res) => {
 // ====================
 
 // Thêm API để tạo container mới
-app.post('/api/containers', authenticateToken, async (req, res) => {
+app.post('/api/containers', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { container_number, container_type, notes } = req.body;
 
@@ -1470,7 +1601,7 @@ app.post('/api/containers', authenticateToken, async (req, res) => {
 });
 
 // Xóa container (chỉ xóa được nếu chưa có đơn hàng)
-app.delete('/api/containers/:id', authenticateToken, async (req, res) => {
+app.delete('/api/containers/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Kiểm tra xem container có đơn hàng không
     const orders = await dbGet(
@@ -1540,7 +1671,7 @@ app.get('/api/reports/customers', authenticateToken, async (req, res) => {
     const report = await dbAll(`
       SELECT 
         c.id,
-        c.company_name,
+        c.name,
         COUNT(DISTINCT o.id) as total_orders,
         COALESCE(SUM((o.price + COALESCE(o.neo_xe, 0) + COALESCE(o.chi_ho, 0)) * 1.1), 0) as total_revenue,
         COALESCE(SUM(p.amount), 0) as total_paid,
@@ -2446,7 +2577,7 @@ app.get('/api/fuel-records/:id', authenticateToken, async (req, res) => {
 });
 
 // Create fuel record
-app.post('/api/fuel-records', authenticateToken, async (req, res) => {
+app.post('/api/fuel-records', authenticateToken, requireRole('admin', 'dispatcher', 'accountant'), async (req, res) => {
   try {
     const { 
       vehicle_id, fuel_date, fuel_type, liters, price_per_liter, 
@@ -2472,7 +2603,7 @@ app.post('/api/fuel-records', authenticateToken, async (req, res) => {
 });
 
 // Update fuel record
-app.put('/api/fuel-records/:id', authenticateToken, async (req, res) => {
+app.put('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'dispatcher', 'accountant'), async (req, res) => {
   try {
     const { 
       vehicle_id, fuel_date, fuel_type, liters, price_per_liter, 
@@ -2525,7 +2656,197 @@ app.delete('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'acc
 
 // ===== CASH FLOW =====
 
-// Get cash flow records
+// Get consolidated cash flow (TỰ ĐỘNG tổng hợp từ tất cả nguồn)
+app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const dateFilter = from && to ? `AND date BETWEEN '${from}' AND '${to}'` : '';
+    
+    const consolidated = [];
+    
+    // ========== THU (TIỀN THỰC TẾ NHẬN ĐƯỢC) ==========
+    // 1. Thanh toán từ khách hàng (payments)
+    try {
+      const payments = await dbAll(`
+        SELECT 
+          'income' as type,
+          'Thanh toán từ khách' as category,
+          c.name || ' - ' || o.order_code || CASE 
+            WHEN p.payment_method THEN ' (' || p.payment_method || ')'
+            ELSE ''
+          END as description,
+          p.amount,
+          p.payment_date as transaction_date,
+          'PAY-' || p.id as reference,
+          'payment' as source
+        FROM payments p
+        JOIN orders o ON p.order_id = o.id
+        JOIN customers c ON o.customer_id = c.id
+        WHERE p.payment_date IS NOT NULL
+          ${dateFilter.replace('date', 'p.payment_date')}
+        ORDER BY p.payment_date DESC
+      `);
+      if (payments && payments.length > 0) consolidated.push(...payments);
+    } catch (e) { console.log('Skip payments:', e.message); }
+    
+    // ========== CHI (TẤT CẢ CHI PHÍ THỰC TẾ) ==========
+    // 2. Lương tài xế đã trả
+    try {
+      const salaries = await dbAll(`
+        SELECT 
+          'expense' as type,
+          'Lương tài xế' as category,
+          d.name || ' - Tháng ' || s.salary_month as description,
+          s.total_salary as amount,
+          s.payment_date as transaction_date,
+          'SALARY-' || s.id as reference,
+          'salary' as source
+        FROM salaries s
+        JOIN drivers d ON s.driver_id = d.id
+        WHERE s.status = 'paid' AND s.payment_date IS NOT NULL
+          ${dateFilter.replace('date', 's.payment_date')}
+        ORDER BY s.payment_date DESC
+      `);
+      if (salaries && salaries.length > 0) consolidated.push(...salaries);
+    } catch (e) { console.log('Skip salaries:', e.message); }
+    
+    // 3. Nhiên liệu
+    try {
+      const fuel = await dbAll(`
+        SELECT 
+          'expense' as type,
+          'Nhiên liệu' as category,
+          v.plate_number || ' - ' || fr.liters || 'L @ ' || fr.price_per_liter || 'đ/L' as description,
+          fr.total_cost as amount,
+          fr.refuel_date as transaction_date,
+          'FUEL-' || fr.id as reference,
+          'fuel' as source
+        FROM fuel_records fr
+        JOIN vehicles v ON fr.vehicle_id = v.id
+        WHERE fr.refuel_date IS NOT NULL
+          ${dateFilter.replace('date', 'fr.refuel_date')}
+        ORDER BY fr.refuel_date DESC
+      `);
+      if (fuel && fuel.length > 0) consolidated.push(...fuel);
+    } catch (e) { console.log('Skip fuel:', e.message); }
+    
+    // 4. Bảo dưỡng xe
+    try {
+      const maintenance = await dbAll(`
+        SELECT 
+          'expense' as type,
+          'Bảo dưỡng xe' as category,
+          v.plate_number || ' - ' || m.maintenance_type as description,
+          m.cost as amount,
+          m.maintenance_date as transaction_date,
+          'MAINT-' || m.id as reference,
+          'maintenance' as source
+        FROM maintenance m
+        JOIN vehicles v ON m.vehicle_id = v.id
+        WHERE m.maintenance_date IS NOT NULL
+          ${dateFilter.replace('date', 'm.maintenance_date')}
+        ORDER BY m.maintenance_date DESC
+      `);
+      if (maintenance && maintenance.length > 0) consolidated.push(...maintenance);
+    } catch (e) { console.log('Skip maintenance:', e.message); }
+    
+    // 5. Chi phí chuyến (trip_costs)
+    try {
+      const tripCosts = await dbAll(`
+        SELECT 
+          'expense' as type,
+          tc.cost_type as category,
+          o.order_code || ' - ' || COALESCE(tc.description, tc.cost_type) as description,
+          tc.amount,
+          COALESCE(tc.date, o.delivery_date, o.order_date) as transaction_date,
+          'COST-' || tc.id as reference,
+          'trip_cost' as source
+        FROM trip_costs tc
+        JOIN orders o ON tc.order_id = o.id
+        WHERE 1=1
+          ${dateFilter.replace('date', 'COALESCE(tc.date, o.delivery_date, o.order_date)')}
+        ORDER BY transaction_date DESC
+      `);
+      if (tripCosts && tripCosts.length > 0) consolidated.push(...tripCosts);
+    } catch (e) { console.log('Skip trip_costs:', e.message); }
+    
+    // 6. Tạm ứng cho tài xế
+    try {
+      const advances = await dbAll(`
+        SELECT 
+          'expense' as type,
+          'Tạm ứng tài xế' as category,
+          d.name || ' - ' || COALESCE(da.reason, 'Tạm ứng') as description,
+          da.amount,
+          da.advance_date as transaction_date,
+          'ADV-' || da.id as reference,
+          'advance' as source
+        FROM driver_advances da
+        JOIN drivers d ON da.driver_id = d.id
+        WHERE da.advance_date IS NOT NULL
+          ${dateFilter.replace('date', 'da.advance_date')}
+        ORDER BY da.advance_date DESC
+      `);
+      if (advances && advances.length > 0) consolidated.push(...advances);
+    } catch (e) { console.log('Skip advances:', e.message); }
+    
+    // 7. Chi hồ, nẹo xe từ orders (đã trả thực tế)
+    try {
+      const orderFees = await dbAll(`
+        SELECT 
+          'expense' as type,
+          CASE 
+            WHEN chi_ho > 0 AND neo_xe > 0 THEN 'Chi hồ + Nẹo xe'
+            WHEN chi_ho > 0 THEN 'Chi hồ'
+            WHEN neo_xe > 0 THEN 'Nẹo xe'
+          END as category,
+          order_code || ' - ' || COALESCE(pickup_location, '') as description,
+          (COALESCE(chi_ho, 0) + COALESCE(neo_xe, 0)) as amount,
+          COALESCE(delivery_date, order_date) as transaction_date,
+          'FEE-' || id as reference,
+          'order_fee' as source
+        FROM orders
+        WHERE (chi_ho > 0 OR neo_xe > 0)
+          ${dateFilter.replace('date', 'COALESCE(delivery_date, order_date)')}
+        ORDER BY transaction_date DESC
+      `);
+      if (orderFees && orderFees.length > 0) consolidated.push(...orderFees);
+    } catch (e) { console.log('Skip order fees:', e.message); }
+    
+    // 8. Thu/Chi thủ công khác (ngoài hệ thống)
+    try {
+      const manual = await dbAll(`
+        SELECT 
+          type,
+          category,
+          description,
+          amount,
+          transaction_date,
+          'MANUAL-' || id as reference,
+          'manual' as source
+        FROM cash_flow
+        WHERE 1=1
+          ${dateFilter.replace('date', 'transaction_date')}
+        ORDER BY transaction_date DESC
+      `);
+      if (manual && manual.length > 0) consolidated.push(...manual);
+    } catch (e) { console.log('Skip cash_flow:', e.message); }
+    
+    // Sắp xếp theo ngày
+    consolidated.sort((a, b) => {
+      const dateA = new Date(a.transaction_date || '1970-01-01');
+      const dateB = new Date(b.transaction_date || '1970-01-01');
+      return dateB - dateA;
+    });
+    
+    res.json(consolidated);
+  } catch (error) {
+    console.error('Error getting consolidated cash flow:', error);
+    res.status(500).json({ error: 'Lỗi lấy dữ liệu dòng tiền tổng hợp: ' + error.message });
+  }
+});
+
+// Get manual cash flow records (chỉ các khoản nhập thủ công)
 app.get('/api/cash-flow', authenticateToken, async (req, res) => {
   try {
     const { type, from, to } = req.query;
@@ -2587,16 +2908,19 @@ app.post('/api/cash-flow', authenticateToken, requireRole('admin', 'accountant')
   try {
     const { 
       transaction_date, type, category, amount, description,
-      payment_method, reference_number, order_id, driver_id, vehicle_id, notes 
+      payment_method, reference_number, order_id, driver_id, vehicle_id, notes,
+      transaction_group, category_details
     } = req.body;
     
     const result = await dbRun(`
       INSERT INTO cash_flow 
       (transaction_date, type, category, amount, description, payment_method,
-       reference_number, order_id, driver_id, vehicle_id, notes, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       reference_number, order_id, driver_id, vehicle_id, notes, transaction_group, 
+       category_details, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [transaction_date, type, category, amount, description, payment_method,
-        reference_number, order_id, driver_id, vehicle_id, notes, req.user.id]);
+        reference_number, order_id, driver_id, vehicle_id, notes, transaction_group,
+        category_details, req.user.id]);
     
     logAudit(req.user.id, req.user.username, req.user.role, 'create', 'cash_flow',
       result.lastID, null, { type, category, amount }, req.ip);
@@ -2613,7 +2937,8 @@ app.put('/api/cash-flow/:id', authenticateToken, requireRole('admin', 'accountan
   try {
     const { 
       transaction_date, type, category, amount, description,
-      payment_method, reference_number, order_id, driver_id, vehicle_id, notes 
+      payment_method, reference_number, order_id, driver_id, vehicle_id, notes,
+      transaction_group, category_details
     } = req.body;
     
     const oldRecord = await dbGet('SELECT * FROM cash_flow WHERE id = ?', [req.params.id]);
@@ -2625,10 +2950,12 @@ app.put('/api/cash-flow/:id', authenticateToken, requireRole('admin', 'accountan
       UPDATE cash_flow 
       SET transaction_date = ?, type = ?, category = ?, amount = ?,
           description = ?, payment_method = ?, reference_number = ?,
-          order_id = ?, driver_id = ?, vehicle_id = ?, notes = ?
+          order_id = ?, driver_id = ?, vehicle_id = ?, notes = ?,
+          transaction_group = ?, category_details = ?
       WHERE id = ?
     `, [transaction_date, type, category, amount, description, payment_method,
-        reference_number, order_id, driver_id, vehicle_id, notes, req.params.id]);
+        reference_number, order_id, driver_id, vehicle_id, notes, transaction_group,
+        category_details, req.params.id]);
     
     logAudit(req.user.id, req.user.username, req.user.role, 'update', 'cash_flow',
       req.params.id, oldRecord, { amount }, req.ip);
@@ -2697,7 +3024,7 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
       query += ` AND (
         (fr.fuel_date >= ? OR fr.fuel_date IS NULL) AND
         (vm.maintenance_date >= ? OR vm.maintenance_date IS NULL) AND
-        (vf.fee_date >= ? OR vf.fee_date IS NULL)
+        (vf.created_at >= ? OR vf.created_at IS NULL)
       )`;
       params.push(from, from, from);
     }
@@ -2706,7 +3033,7 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
       query += ` AND (
         (fr.fuel_date <= ? OR fr.fuel_date IS NULL) AND
         (vm.maintenance_date <= ? OR vm.maintenance_date IS NULL) AND
-        (vf.fee_date <= ? OR vf.fee_date IS NULL)
+        (vf.created_at <= ? OR vf.created_at IS NULL)
       )`;
       params.push(to, to, to);
     }
@@ -2899,23 +3226,36 @@ app.get('/api/customers/:id', authenticateToken, async (req, res) => {
 app.post('/api/customers', authenticateToken, requireRole('admin', 'sales'), async (req, res) => {
   try {
     const {
-      company_name, tax_code, contact_person, phone, email, address,
+      name, tax_code, contact_person, phone, email, address,
       customer_type, credit_limit, payment_terms, status, notes
     } = req.body;
     
-    if (!company_name) {
+    // Debug logging
+    console.log('📥 POST /api/customers - Received data:', {
+      name,
+      name_type: typeof name,
+      name_length: name ? name.length : 0,
+      all_fields: Object.keys(req.body)
+    });
+    
+    // Trim và validate name
+    const trimmedName = (name || '').trim();
+    console.log('✂️ Trimmed name:', trimmedName, '| isEmpty:', !trimmedName);
+    
+    if (!trimmedName) {
+      console.log('❌ Validation failed: empty name');
       return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
     }
     
     const query = `
       INSERT INTO customers (
-        company_name, tax_code, contact_person, phone, email, address,
+        name, tax_code, contact_person, phone, email, address,
         customer_type, credit_limit, payment_terms, status, notes, created_by
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     db.run(query, [
-      company_name, tax_code, contact_person, phone, email, address,
+      trimmedName, tax_code, contact_person, phone, email, address,
       customer_type || 'individual', credit_limit || 0, payment_terms || 'COD',
       status || 'active', notes, req.user.userId
     ], function(err) {
@@ -2924,7 +3264,7 @@ app.post('/api/customers', authenticateToken, requireRole('admin', 'sales'), asy
         return res.status(500).json({ error: 'Lỗi tạo khách hàng' });
       }
       
-      logAudit(req.user.userId, 'create', 'customers', this.lastID, { company_name });
+      logAudit(req.user.userId, 'create', 'customers', this.lastID, { name });
       res.json({ id: this.lastID, message: 'Đã tạo khách hàng' });
     });
   } catch (error) {
@@ -2937,20 +3277,37 @@ app.post('/api/customers', authenticateToken, requireRole('admin', 'sales'), asy
 app.put('/api/customers/:id', authenticateToken, requireRole('admin', 'sales'), async (req, res) => {
   try {
     const {
-      company_name, tax_code, contact_person, phone, email, address,
+      name, tax_code, contact_person, phone, email, address,
       customer_type, credit_limit, payment_terms, status, notes
     } = req.body;
     
+    // Debug logging
+    console.log('📥 PUT /api/customers/:id - Received data:', {
+      id: req.params.id,
+      name,
+      name_type: typeof name,
+      name_length: name ? name.length : 0
+    });
+    
+    // Trim và validate name
+    const trimmedName = (name || '').trim();
+    console.log('✂️ Trimmed name:', trimmedName, '| isEmpty:', !trimmedName);
+    
+    if (!trimmedName) {
+      console.log('❌ Validation failed: empty name');
+      return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
+    }
+    
     const query = `
       UPDATE customers SET
-        company_name = ?, tax_code = ?, contact_person = ?, phone = ?,
+        name = ?, tax_code = ?, contact_person = ?, phone = ?,
         email = ?, address = ?, customer_type = ?, credit_limit = ?,
         payment_terms = ?, status = ?, notes = ?
       WHERE id = ?
     `;
     
     db.run(query, [
-      company_name, tax_code, contact_person, phone, email, address,
+      trimmedName, tax_code, contact_person, phone, email, address,
       customer_type, credit_limit, payment_terms, status, notes,
       req.params.id
     ], function(err) {
@@ -2963,7 +3320,7 @@ app.put('/api/customers/:id', authenticateToken, requireRole('admin', 'sales'), 
         return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
       }
       
-      logAudit(req.user.userId, 'update', 'customers', req.params.id, { company_name });
+      logAudit(req.user.userId, 'update', 'customers', req.params.id, { name });
       res.json({ message: 'Đã cập nhật khách hàng' });
     });
   } catch (error) {
@@ -2975,42 +3332,53 @@ app.put('/api/customers/:id', authenticateToken, requireRole('admin', 'sales'), 
 // ====================
 // PHASE 3.1: CRM - QUOTES
 // ====================
+// ====================
+// QUOTES APIs
+// ====================
 
 // List quotes
 app.get('/api/quotes', authenticateToken, async (req, res) => {
   try {
-    const { status, customer_id } = req.query;
-    
-    let query = `
-      SELECT q.*, c.company_name, c.contact_person, c.phone as customer_phone
-      FROM quotes q
-      LEFT JOIN customers c ON q.customer_id = c.id
-      WHERE 1=1
-    `;
-    const params = [];
-    
-    if (status) {
-      query += ' AND q.status = ?';
-      params.push(status);
-    }
-    
-    if (customer_id) {
-      query += ' AND q.customer_id = ?';
-      params.push(customer_id);
-    }
-    
-    query += ' ORDER BY q.quote_date DESC';
-    
-    db.all(query, params, (err, rows) => {
-      if (err) {
-        console.error('Lỗi query quotes:', err);
-        return res.status(500).json({ error: 'Lỗi lấy danh sách báo giá' });
+    // Check if quotes table exists
+    db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='quotes'", [], (err, row) => {
+      if (err || !row) {
+        // Table doesn't exist yet - return empty array
+        return res.json([]);
       }
-      res.json(rows);
+      
+      const { status, customer_id } = req.query;
+      
+      let query = `
+        SELECT q.*, c.name as customer_name, c.contact_person, c.phone as customer_phone
+        FROM quotes q
+        LEFT JOIN customers c ON q.customer_id = c.id
+        WHERE 1=1
+      `;
+      const params = [];
+      
+      if (status) {
+        query += ' AND q.status = ?';
+        params.push(status);
+      }
+      
+      if (customer_id) {
+        query += ' AND q.customer_id = ?';
+        params.push(customer_id);
+      }
+      
+      query += ' ORDER BY q.quote_date DESC';
+      
+      db.all(query, params, (err, rows) => {
+        if (err) {
+          console.error('Lỗi query quotes:', err);
+          return res.status(500).json({ error: 'Lỗi lấy danh sách báo giá' });
+        }
+        res.json(rows);
+      });
     });
   } catch (error) {
-    console.error('Lỗi quotes:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error in /api/quotes:', error);
+    res.status(500).json({ error: 'Lỗi server' });
   }
 });
 
@@ -3018,7 +3386,7 @@ app.get('/api/quotes', authenticateToken, async (req, res) => {
 app.get('/api/quotes/:id', authenticateToken, async (req, res) => {
   try {
     const query = `
-      SELECT q.*, c.company_name, c.contact_person, c.phone as customer_phone
+      SELECT q.*, c.name as customer_name, c.contact_person, c.phone as customer_phone
       FROM quotes q
       LEFT JOIN customers c ON q.customer_id = c.id
       WHERE q.id = ?

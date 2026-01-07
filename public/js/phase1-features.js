@@ -1,7 +1,7 @@
 // ==================== PHASE 1: SALARY MANAGEMENT ====================
 
-// Helper functions
-function formatCurrency(amount) {
+// Helper functions - Export to global scope
+window.formatCurrency = function formatCurrency(amount) {
   if (!amount) return '0đ';
   return new Intl.NumberFormat('vi-VN', { 
     style: 'currency', 
@@ -9,7 +9,7 @@ function formatCurrency(amount) {
   }).format(amount);
 }
 
-function formatNumber(num) {
+window.formatNumber = function formatNumber(num) {
   if (!num) return '0';
   return new Intl.NumberFormat('vi-VN').format(num);
 }
@@ -25,6 +25,9 @@ window.renderSalaries = async function renderSalaries(container) {
         </button>
         <button class="btn btn-secondary" onclick="showBonusPenaltyModal()">
           ⭐ Thưởng/Phạt
+        </button>
+        <button class="btn btn-success" onclick="exportSalariesExcel()">
+          📊 Export Excel
         </button>
       </div>
     </div>
@@ -147,6 +150,7 @@ async function loadSalaries() {
               <td><strong>${formatCurrency(s.total_salary)}</strong></td>
               <td>${getSalaryStatusBadge(s.status)}</td>
               <td class="actions">
+                <button class="btn btn-sm btn-info" onclick="viewSalaryDetail(${s.id})" title="Xem chi tiết">👁️</button>
                 ${s.status === 'draft' ? `
                   <button class="btn btn-sm btn-info" onclick="editSalary(${s.id})" title="Sửa">✏️</button>
                   <button class="btn btn-sm btn-success" onclick="approveSalary(${s.id})" title="Duyệt">✅</button>
@@ -492,6 +496,317 @@ window.deleteSalary = async function(id) {
   }
 };
 
+// ===== VIEW SALARY DETAIL =====
+
+window.viewSalaryDetail = async function(salaryId) {
+  try {
+    const salary = await apiCall(`/salaries/${salaryId}`);
+    
+    // Get bonuses and penalties for this month
+    const bonuses = await apiCall(`/bonuses-penalties?month=${salary.salary_month}&driver_id=${salary.driver_id}`);
+    
+    // Get completed orders for this month
+    const orders = await apiCall(`/orders?driver_id=${salary.driver_id}&status=completed`);
+    const monthOrders = orders.filter(o => {
+      if (!o.delivery_date) return false;
+      const orderMonth = o.delivery_date.substring(0, 7);
+      return orderMonth === salary.salary_month;
+    });
+    
+    let modal = `
+      <div class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal modal-large" onclick="event.stopPropagation()">
+          <div class="modal-header">
+            <h2>📊 Chi tiết lương tháng ${salary.salary_month}</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="info-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; color: white; margin-bottom: 20px;">
+              <h3 style="margin: 0 0 10px 0;">👤 ${salary.driver_name}</h3>
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                <div>
+                  <p style="margin: 5px 0; opacity: 0.9;">Lương cơ bản</p>
+                  <h4 style="margin: 5px 0;">${formatCurrency(salary.base_salary)}</h4>
+                </div>
+                <div>
+                  <p style="margin: 5px 0; opacity: 0.9;">Số chuyến</p>
+                  <h4 style="margin: 5px 0;">${salary.trip_count}</h4>
+                </div>
+                <div>
+                  <p style="margin: 5px 0; opacity: 0.9;">Trạng thái</p>
+                  <h4 style="margin: 5px 0;">${getSalaryStatusBadge(salary.status)}</h4>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+              <div class="detail-section">
+                <h4>📦 Chuyến hàng hoàn thành (${monthOrders.length})</h4>
+                ${monthOrders.length > 0 ? `
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Mã đơn</th>
+                        <th>Ngày</th>
+                        <th>Khách hàng</th>
+                        <th>Giá trị</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${monthOrders.map(o => `
+                        <tr>
+                          <td>${o.order_code}</td>
+                          <td>${formatDate(o.delivery_date)}</td>
+                          <td>${o.customer_name}</td>
+                          <td>${formatCurrency(o.final_amount)}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                ` : '<p class="no-data">Không có chuyến nào</p>'}
+              </div>
+
+              <div class="detail-section">
+                <h4>⭐ Thưởng/Phạt (${bonuses.length})</h4>
+                ${bonuses.length > 0 ? `
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Ngày</th>
+                        <th>Loại</th>
+                        <th>Số tiền</th>
+                        <th>Lý do</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${bonuses.map(b => `
+                        <tr>
+                          <td>${formatDate(b.date)}</td>
+                          <td>${b.type === 'bonus' ? '<span class="badge badge-active">Thưởng</span>' : '<span class="badge badge-pending">Phạt</span>'}</td>
+                          <td class="${b.type === 'bonus' ? 'text-success' : 'text-danger'}">${formatCurrency(b.amount)}</td>
+                          <td>${b.reason}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                ` : '<p class="no-data">Không có thưởng/phạt</p>'}
+              </div>
+            </div>
+
+            <div class="info-box" style="background: #f0f9ff; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea;">
+              <h4 style="margin-top: 0;">💰 Tổng kết</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 8px 0;">Lương cơ bản:</td>
+                  <td style="text-align: right; font-weight: bold;">${formatCurrency(salary.base_salary)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #2e7d32;">+ Thưởng:</td>
+                  <td style="text-align: right; font-weight: bold; color: #2e7d32;">${formatCurrency(salary.trip_bonus)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #c62828;">- Phạt:</td>
+                  <td style="text-align: right; font-weight: bold; color: #c62828;">${formatCurrency(salary.deductions)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #f57c00;">- Tạm ứng trừ:</td>
+                  <td style="text-align: right; font-weight: bold; color: #f57c00;">${formatCurrency(salary.advances_deducted)}</td>
+                </tr>
+                <tr style="border-top: 2px solid #667eea;">
+                  <td style="padding: 12px 0; font-size: 18px;"><strong>Tổng lương:</strong></td>
+                  <td style="text-align: right; font-size: 20px; font-weight: bold; color: #667eea;">${formatCurrency(salary.total_salary)}</td>
+                </tr>
+              </table>
+            </div>
+
+            ${salary.notes ? `
+              <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-radius: 4px;">
+                <strong>📝 Ghi chú:</strong> ${salary.notes}
+              </div>
+            ` : ''}
+            
+            ${bonuses.length > 0 && (salary.trip_bonus === 0 || salary.deductions === 0) ? `
+              <div style="margin-top: 15px; padding: 15px; background: #fff3cd; border-left: 4px solid #f59e0b; border-radius: 4px;">
+                <p style="margin: 0 0 10px 0;"><strong>⚠️ Cảnh báo:</strong> Có thưởng/phạt nhưng chưa được tính vào bản lương!</p>
+                <button class="btn btn-warning" onclick="recalculateSalary(${salaryId})">🔄 Tính lại bản lương</button>
+              </div>
+            ` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
+            ${salary.status === 'draft' ? `
+              <button class="btn btn-warning" onclick="recalculateSalary(${salaryId})">🔄 Tính lại</button>
+            ` : ''}
+            <button class="btn btn-primary" onclick="exportSalaryDetailPDF(${salaryId})">📄 Export PDF</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById('modalContainer').innerHTML = modal;
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
+
+// ===== EXPORT EXCEL =====
+
+window.exportSalariesExcel = async function() {
+  try {
+    const month = document.getElementById('filterSalaryMonth')?.value;
+    const driver_id = document.getElementById('filterSalaryDriver')?.value;
+    
+    let url = '/salaries?';
+    if (month) url += `month=${month}&`;
+    if (driver_id) url += `driver_id=${driver_id}&`;
+    
+    const salaries = await apiCall(url);
+    
+    if (!salaries || salaries.length === 0) {
+      alert('Không có dữ liệu để export');
+      return;
+    }
+    
+    // Create Excel-compatible HTML table
+    let html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head>
+        <meta charset="utf-8">
+        <style>
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid black; padding: 8px; text-align: left; }
+          th { background-color: #667eea; color: white; font-weight: bold; }
+          .number { text-align: right; }
+        </style>
+      </head>
+      <body>
+        <h2>BẢNG LƯƠNG TÀI XẾ ${month ? `- THÁNG ${month}` : ''}</h2>
+        <p>Ngày xuất: ${formatDate(new Date().toISOString())}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>STT</th>
+              <th>Tháng</th>
+              <th>Tài xế</th>
+              <th>Lương cơ bản (VNĐ)</th>
+              <th>Số chuyến</th>
+              <th>Thưởng (VNĐ)</th>
+              <th>Phạt (VNĐ)</th>
+              <th>Tạm ứng trừ (VNĐ)</th>
+              <th>Tổng lương (VNĐ)</th>
+              <th>Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    let totalBaseSalary = 0;
+    let totalBonus = 0;
+    let totalPenalty = 0;
+    let totalAdvance = 0;
+    let totalSalary = 0;
+    
+    salaries.forEach((s, index) => {
+      totalBaseSalary += s.base_salary || 0;
+      totalBonus += s.trip_bonus || 0;
+      totalPenalty += s.deductions || 0;
+      totalAdvance += s.advances_deducted || 0;
+      totalSalary += s.total_salary || 0;
+      
+      html += `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${s.salary_month}</td>
+          <td>${s.driver_name}</td>
+          <td class="number">${(s.base_salary || 0).toLocaleString('vi-VN')}</td>
+          <td class="number">${s.trip_count}</td>
+          <td class="number">${(s.trip_bonus || 0).toLocaleString('vi-VN')}</td>
+          <td class="number">${(s.deductions || 0).toLocaleString('vi-VN')}</td>
+          <td class="number">${(s.advances_deducted || 0).toLocaleString('vi-VN')}</td>
+          <td class="number"><strong>${(s.total_salary || 0).toLocaleString('vi-VN')}</strong></td>
+          <td>${s.status === 'draft' ? 'Nháp' : s.status === 'approved' ? 'Đã duyệt' : 'Đã trả'}</td>
+        </tr>
+      `;
+    });
+    
+    html += `
+            <tr style="background-color: #f0f0f0; font-weight: bold;">
+              <td colspan="3">TỔNG CỘNG</td>
+              <td class="number">${totalBaseSalary.toLocaleString('vi-VN')}</td>
+              <td></td>
+              <td class="number">${totalBonus.toLocaleString('vi-VN')}</td>
+              <td class="number">${totalPenalty.toLocaleString('vi-VN')}</td>
+              <td class="number">${totalAdvance.toLocaleString('vi-VN')}</td>
+              <td class="number">${totalSalary.toLocaleString('vi-VN')}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+    
+    // Create blob and download
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `Luong_TaiXe_${month || 'TatCa'}_${new Date().getTime()}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+    
+    alert('✅ Đã export file Excel thành công!');
+  } catch (error) {
+    alert('Lỗi export: ' + error.message);
+  }
+};
+
+window.exportSalaryDetailPDF = function(salaryId) {
+  alert('Chức năng export PDF đang được phát triển. Hiện tại bạn có thể dùng Ctrl+P để in hoặc lưu PDF.');
+};
+
+// ===== RECALCULATE SALARY =====
+
+window.recalculateSalary = async function(salaryId) {
+  if (!confirm('Tính lại bản lương này? Hệ thống sẽ cập nhật lại thưởng/phạt từ dữ liệu hiện tại.')) return;
+  
+  try {
+    // Get current salary
+    const salary = await apiCall(`/salaries/${salaryId}`);
+    
+    // Recalculate using the same logic as calculate endpoint
+    const result = await apiCall('/salaries/calculate', {
+      method: 'POST',
+      body: JSON.stringify({
+        driver_id: salary.driver_id,
+        salary_month: salary.salary_month,
+        base_salary: salary.base_salary
+      })
+    });
+    
+    // Update the salary record
+    await apiCall(`/salaries/${salaryId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        trip_count: result.trip_count,
+        trip_bonus: result.trip_bonus,
+        deductions: result.deductions,
+        advances_deducted: result.advances_deducted,
+        total_salary: result.total_salary
+      })
+    });
+    
+    alert(`✅ Đã tính lại bản lương!\n\nThưởng: ${formatCurrency(result.trip_bonus)}\nPhạt: ${formatCurrency(result.deductions)}\nTổng lương mới: ${formatCurrency(result.total_salary)}`);
+    
+    closeModal();
+    await loadSalaries();
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
+
 // ===== BONUSES & PENALTIES =====
 
 async function loadBonusesPenalties() {
@@ -636,6 +951,9 @@ window.saveBonusPenalty = async function(event) {
     alert('Đã lưu thành công!');
     closeModal();
     await loadBonusesPenalties();
+    
+    // Auto-update related salary if exists
+    await autoUpdateRelatedSalary(data.driver_id, data.date);
   } catch (error) {
     alert('Lỗi: ' + error.message);
   }
@@ -645,13 +963,67 @@ window.deleteBonusPenalty = async function(id) {
   if (!confirm('Xóa bản ghi này?')) return;
   
   try {
+    // Get bonus info before deleting
+    const bonuses = await apiCall('/bonuses-penalties');
+    const bonus = bonuses.find(b => b.id === id);
+    
     await apiCall(`/bonuses-penalties/${id}`, { method: 'DELETE' });
     alert('Đã xóa!');
     await loadBonusesPenalties();
+    
+    // Auto-update related salary if exists
+    if (bonus) {
+      await autoUpdateRelatedSalary(bonus.driver_id, bonus.date);
+    }
   } catch (error) {
     alert('Lỗi: ' + error.message);
   }
 };
+
+// Auto-update salary when bonus/penalty changes
+async function autoUpdateRelatedSalary(driver_id, date) {
+  try {
+    const month = date.substring(0, 7); // Extract YYYY-MM
+    
+    // Check if salary exists for this month
+    const salaries = await apiCall(`/salaries?month=${month}&driver_id=${driver_id}`);
+    
+    if (salaries && salaries.length > 0) {
+      const salary = salaries[0];
+      
+      // Only auto-update if status is draft
+      if (salary.status === 'draft') {
+        // Recalculate
+        const result = await apiCall('/salaries/calculate', {
+          method: 'POST',
+          body: JSON.stringify({
+            driver_id: salary.driver_id,
+            salary_month: salary.salary_month,
+            base_salary: salary.base_salary
+          })
+        });
+        
+        // Update
+        await apiCall(`/salaries/${salary.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            trip_count: result.trip_count,
+            trip_bonus: result.trip_bonus,
+            deductions: result.deductions,
+            advances_deducted: result.advances_deducted,
+            total_salary: result.total_salary
+          })
+        });
+        
+        console.log(`✅ Auto-updated salary #${salary.id} for month ${month}`);
+        await loadSalaries(); // Refresh the salary list
+      }
+    }
+  } catch (error) {
+    console.error('Error auto-updating salary:', error);
+    // Don't show alert, just log the error
+  }
+}
 
 // ==================== PHASE 1: VEHICLE MAINTENANCE ====================
 

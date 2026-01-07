@@ -71,9 +71,18 @@
           const data = await response.json();
           
           if (response.ok) {
+            // Lưu vào localStorage
             localStorage.setItem('token', data.token);
             localStorage.setItem('user', JSON.stringify(data.user));
-            window.location.href = 'index.html';
+            
+            // Debug log
+            console.log('✅ Token saved:', data.token.substring(0, 20) + '...');
+            console.log('✅ User saved:', data.user);
+            
+            // Đợi một chút để đảm bảo localStorage được lưu
+            setTimeout(() => {
+              window.location.href = 'index.html';
+            }, 100);
           } else {
             errorDiv.textContent = data.error || 'Đăng nhập thất bại';
             errorDiv.style.display = 'block';

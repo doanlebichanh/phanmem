@@ -1,4 +1,46 @@
-# freight.db sẽ được tạo tự động khi chạy server lần đầu
+# Dependencies
 node_modules/
-*.log
+package-lock.json
+
+# Database files
+*.db
+freight.db
+
+# Environment variables
 .env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output
+dist/
+build/
+out/
+
+# Test & Debug files
+test-*.html
+debug-*.html
+quick-test.html
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Documentation (internal)
+CHANGES_SUMMARY.md
+FIX_LOG_LUONG.md
+TEST_FEATURES.md

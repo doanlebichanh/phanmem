@@ -493,16 +493,19 @@ async function loadCashFlow() {
     const from = document.getElementById('filterCashFrom')?.value;
     const to = document.getElementById('filterCashTo')?.value;
     
-    let url = '/cash-flow?';
-    if (type) url += `type=${type}&`;
+    // Dùng API consolidated để tự động tổng hợp từ tất cả nguồn
+    let url = '/cash-flow/consolidated?';
     if (from) url += `from=${from}&`;
     if (to) url += `to=${to}&`;
     
     const records = await apiCall(url);
     
+    // Lọc theo type nếu có
+    const filteredRecords = type ? records.filter(r => r.type === type) : records;
+    
     // Tính tổng thu chi
-    const totalIncome = records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amount, 0);
-    const totalExpense = records.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.amount, 0);
+    const totalIncome = records.filter(r => r.type === 'income').reduce((sum, r) => sum + (r.amount || 0), 0);
+    const totalExpense = records.filter(r => r.type === 'expense').reduce((sum, r) => sum + (r.amount || 0), 0);
     const netFlow = totalIncome - totalExpense;
 
     // Hiển thị summary
@@ -523,12 +526,20 @@ async function loadCashFlow() {
 
     // Hiển thị danh sách
     const listContent = document.getElementById('cashflow-list');
-    if (!records || records.length === 0) {
+    if (!filteredRecords || filteredRecords.length === 0) {
       listContent.innerHTML = '<p class="no-data">Chưa có dữ liệu dòng tiền</p>';
       return;
     }
 
     listContent.innerHTML = `
+      <div class="alert alert-info" style="margin-bottom: 15px;">
+        <strong>ℹ️ Lưu ý:</strong> Dữ liệu bên dưới được tự động tổng hợp từ:
+        <ul style="margin: 10px 0 0 20px;">
+          <li>💵 <strong>Thu</strong>: Doanh thu từ các đơn hàng đã giao</li>
+          <li>💸 <strong>Chi</strong>: Lương tài xế, nhiên liệu, bảo dưỡng, chi phí chuyến</li>
+          <li>📝 Các khoản thu/chi ngoài hệ thống nhập thủ công</li>
+        </ul>
+      </div>
       <table class="data-table">
         <thead>
           <tr>
@@ -537,13 +548,12 @@ async function loadCashFlow() {
             <th>Danh mục</th>
             <th>Mô tả</th>
             <th>Số tiền</th>
-            <th>Phương thức</th>
-            <th>Liên quan</th>
-            <th>Thao tác</th>
+            <th>Nguồn</th>
+            <th>Mã tham chiếu</th>
           </tr>
         </thead>
         <tbody>
-          ${records.map(r => `
+          ${filteredRecords.map(r => `
             <tr>
               <td>${formatDate(r.transaction_date)}</td>
               <td>
@@ -551,27 +561,35 @@ async function loadCashFlow() {
                   ${r.type === 'income' ? '💵 Thu' : '💸 Chi'}
                 </span>
               </td>
-              <td>${getCashFlowCategoryName(r.category)}</td>
+              <td>${r.category || '-'}</td>
               <td>${r.description || '-'}</td>
               <td class="text-right ${r.type === 'income' ? 'text-success' : 'text-danger'}">
                 <strong>${formatCurrency(r.amount)}</strong>
               </td>
-              <td>${getPaymentMethodName(r.payment_method)}</td>
               <td>
-                ${r.order_code ? `Đơn: ${r.order_code}` : ''}
-                ${r.driver_name ? `TX: ${r.driver_name}` : ''}
-                ${r.plate_number ? `Xe: ${r.plate_number}` : ''}
-                ${!r.order_code && !r.driver_name && !r.plate_number ? '-' : ''}
+                <span class="badge badge-info">
+                  ${getSourceName(r.source)}
+                </span>
               </td>
-              <td class="actions">
-                <button class="btn btn-sm btn-info" onclick="editCashFlow(${r.id})" title="Sửa">✏️</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteCashFlow(${r.id})" title="Xóa">🗑️</button>
-              </td>
+              <td><code>${r.reference || '-'}</code></td>
             </tr>
           `).join('')}
         </tbody>
       </table>
     `;
+
+    // Helper function to get source display name
+    function getSourceName(source) {
+      const names = {
+        'order': '📦 Đơn hàng',
+        'salary': '💼 Lương',
+        'fuel': '⛽ Nhiên liệu',
+        'maintenance': '🔧 Bảo dưỡng',
+        'trip_cost': '🚚 Chi phí chuyến',
+        'manual': '✏️ Thủ công'
+      };
+      return names[source] || source;
+    }
 
     // Biểu đồ đơn giản (text based)
     const chartContent = document.getElementById('cashflow-chart');
@@ -673,22 +691,23 @@ window.showCashFlowModal = async function(cashId = null) {
               </div>
             </div>
 
-            <div class="form-row">
-              <div class="form-group">
-                <label>📋 Danh mục *</label>
-                <select id="cashCategory" required>
-                  <option value="">-- Chọn danh mục --</option>
-                </select>
+            <div class="form-group">
+              <label style="display: flex; justify-content: space-between; align-items: center;">
+                <span>📋 Danh mục & Chi tiết *</span>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addCategoryRow()" style="padding: 4px 12px;">➕ Thêm danh mục</button>
+              </label>
+              <div id="categoryItems">
+                <!-- Category rows will be added here -->
               </div>
-              <div class="form-group">
-                <label>💰 Số tiền (VNĐ) *</label>
-                <input type="number" id="cashAmount" value="${cash?.amount || ''}" required placeholder="VD: 5000000">
+              <div style="margin-top: 10px; padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white; display: flex; justify-content: space-between; align-items: center;">
+                <strong style="font-size: 16px;">💰 TỔNG CỘNG:</strong>
+                <strong id="totalAmount" style="font-size: 20px;">0 đ</strong>
               </div>
             </div>
 
             <div class="form-group">
-              <label>📝 Mô tả *</label>
-              <input type="text" id="cashDescription" value="${cash?.description || ''}" required placeholder="Mô tả ngắn gọn">
+              <label>📝 Mô tả chung *</label>
+              <input type="text" id="cashDescription" value="${cash?.description || ''}" required placeholder="Mô tả ngắn gọn cho toàn bộ giao dịch">
             </div>
 
             <div class="form-row">
@@ -749,9 +768,22 @@ window.showCashFlowModal = async function(cashId = null) {
     `;
     document.getElementById('modalContainer').innerHTML = modal;
     
+    // Initialize category items
+    window.categoryItems = [];
+    
     // Set categories dựa trên type hiện tại
     if (cash) {
-      updateCashCategories(cash.category);
+      updateCashCategories();
+      // Add existing category as first row
+      window.categoryItems = [{
+        category: cash.category,
+        amount: cash.amount,
+        description: cash.category_description || ''
+      }];
+      renderCategoryRows();
+    } else {
+      // Add one empty row by default
+      addCategoryRow();
     }
   } catch (error) {
     alert('Lỗi: ' + error.message);
@@ -759,8 +791,8 @@ window.showCashFlowModal = async function(cashId = null) {
 };
 
 window.updateCashCategories = function(selectedValue = '') {
-  const type = document.getElementById('cashType').value;
-  const categorySelect = document.getElementById('cashCategory');
+  const type = document.getElementById('cashType')?.value;
+  if (!type) return;
   
   const incomeCategories = [
     { value: 'freight_revenue', label: '🚚 Cước vận chuyển' },
@@ -777,30 +809,160 @@ window.updateCashCategories = function(selectedValue = '') {
     { value: 'other_expense', label: '➖ Chi khác' }
   ];
   
-  const categories = type === 'income' ? incomeCategories : expenseCategories;
+  window.availableCategories = type === 'income' ? incomeCategories : expenseCategories;
   
-  categorySelect.innerHTML = '<option value="">-- Chọn danh mục --</option>';
-  categories.forEach(cat => {
-    const option = document.createElement('option');
-    option.value = cat.value;
-    option.textContent = cat.label;
-    if (selectedValue === cat.value) {
-      option.selected = true;
-    }
-    categorySelect.appendChild(option);
-  });
+  // Re-render category rows with new categories
+  renderCategoryRows();
 };
+
+// Add new category row
+window.addCategoryRow = function() {
+  if (!window.categoryItems) {
+    window.categoryItems = [];
+  }
+  
+  window.categoryItems.push({
+    category: '',
+    amount: 0,
+    description: ''
+  });
+  
+  renderCategoryRows();
+};
+
+// Remove category row
+window.removeCategoryRow = function(index) {
+  if (window.categoryItems.length <= 1) {
+    alert('Phải có ít nhất 1 danh mục!');
+    return;
+  }
+  
+  window.categoryItems.splice(index, 1);
+  renderCategoryRows();
+  calculateTotal();
+};
+
+// Update category item
+window.updateCategoryItem = function(index, field, value) {
+  if (!window.categoryItems[index]) return;
+  
+  window.categoryItems[index][field] = value;
+  
+  if (field === 'amount') {
+    calculateTotal();
+  }
+};
+
+// Render all category rows
+function renderCategoryRows() {
+  const container = document.getElementById('categoryItems');
+  if (!container) return;
+  
+  const categories = window.availableCategories || [];
+  
+  let html = '';
+  
+  window.categoryItems.forEach((item, index) => {
+    html += `
+      <div class="category-row" style="display: flex; gap: 10px; margin-bottom: 10px; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; background: #f8f9fa;">
+        <div style="flex: 2;">
+          <select 
+            class="form-control" 
+            onchange="updateCategoryItem(${index}, 'category', this.value)"
+            required
+            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"
+          >
+            <option value="">-- Chọn danh mục --</option>
+            ${categories.map(cat => `
+              <option value="${cat.value}" ${item.category === cat.value ? 'selected' : ''}>
+                ${cat.label}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+        <div style="flex: 1;">
+          <input 
+            type="number" 
+            class="form-control" 
+            placeholder="Số tiền"
+            value="${item.amount || ''}"
+            oninput="updateCategoryItem(${index}, 'amount', parseFloat(this.value) || 0)"
+            required
+            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"
+          >
+        </div>
+        <div style="flex: 2;">
+          <input 
+            type="text" 
+            class="form-control" 
+            placeholder="Mô tả chi tiết (tùy chọn)"
+            value="${item.description || ''}"
+            onchange="updateCategoryItem(${index}, 'description', this.value)"
+            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;"
+          >
+        </div>
+        <div>
+          <button 
+            type="button" 
+            class="btn btn-sm btn-danger" 
+            onclick="removeCategoryRow(${index})"
+            title="Xóa"
+            style="padding: 8px 12px; height: 100%;"
+          >
+            🗑️
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+  calculateTotal();
+}
+
+// Calculate total amount
+function calculateTotal() {
+  if (!window.categoryItems) return;
+  
+  const total = window.categoryItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  
+  const totalElement = document.getElementById('totalAmount');
+  if (totalElement) {
+    totalElement.textContent = formatCurrency(total);
+  }
+  
+  return total;
+}
 
 window.saveCashFlow = async function(event, cashId) {
   event.preventDefault();
   
   try {
-    const data = {
+    // Validate category items
+    if (!window.categoryItems || window.categoryItems.length === 0) {
+      alert('Vui lòng thêm ít nhất 1 danh mục!');
+      return;
+    }
+    
+    // Check if all categories have values
+    for (let i = 0; i < window.categoryItems.length; i++) {
+      const item = window.categoryItems[i];
+      if (!item.category) {
+        alert(`Vui lòng chọn danh mục cho dòng ${i + 1}!`);
+        return;
+      }
+      if (!item.amount || item.amount <= 0) {
+        alert(`Vui lòng nhập số tiền cho dòng ${i + 1}!`);
+        return;
+      }
+    }
+    
+    const totalAmount = calculateTotal();
+    
+    // Prepare data - Save multiple transactions or one combined transaction
+    const baseData = {
       transaction_date: document.getElementById('cashDate').value,
       type: document.getElementById('cashType').value,
-      category: document.getElementById('cashCategory').value,
-      amount: parseFloat(document.getElementById('cashAmount').value),
-      description: document.getElementById('cashDescription').value,
       payment_method: document.getElementById('cashPaymentMethod').value || null,
       reference_number: document.getElementById('cashReference').value || null,
       order_id: document.getElementById('cashOrder').value || null,
@@ -808,23 +970,50 @@ window.saveCashFlow = async function(event, cashId) {
       vehicle_id: document.getElementById('cashVehicle').value || null,
       notes: document.getElementById('cashNotes').value
     };
-
+    
+    // If editing existing record
     if (cashId) {
+      // Update single record (maintain backward compatibility)
+      const data = {
+        ...baseData,
+        category: window.categoryItems[0].category,
+        amount: totalAmount,
+        description: document.getElementById('cashDescription').value,
+        category_details: JSON.stringify(window.categoryItems) // Store details as JSON
+      };
+      
       await apiCall(`/cash-flow/${cashId}`, {
         method: 'PUT',
         body: JSON.stringify(data)
       });
+      
+      alert('Đã cập nhật thành công!');
     } else {
-      await apiCall('/cash-flow', {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
+      // Create new - save as separate transactions for each category
+      const commonDescription = document.getElementById('cashDescription').value;
+      
+      for (const item of window.categoryItems) {
+        const data = {
+          ...baseData,
+          category: item.category,
+          amount: item.amount,
+          description: item.description || commonDescription,
+          transaction_group: Date.now() // Group related transactions
+        };
+        
+        await apiCall('/cash-flow', {
+          method: 'POST',
+          body: JSON.stringify(data)
+        });
+      }
+      
+      alert(`Đã lưu thành công ${window.categoryItems.length} khoản chi phí!\nTổng: ${formatCurrency(totalAmount)}`);
     }
 
-    alert('Đã lưu thành công!');
     closeModal();
     await loadCashFlow();
   } catch (error) {
+    console.error('Save error:', error);
     alert('Lỗi: ' + error.message);
   }
 };

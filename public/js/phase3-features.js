@@ -239,7 +239,7 @@ async function loadCustomers() {
         <tbody>
           ${customers.map(c => `
             <tr>
-              <td><strong>${c.company_name}</strong></td>
+              <td><strong>${c.name}</strong></td>
               <td>${c.tax_code || '-'}</td>
               <td>${c.contact_person || '-'}</td>
               <td>${c.phone || '-'}</td>
@@ -265,10 +265,11 @@ async function loadCustomers() {
 }
 
 async function loadQuotes() {
+  const content = document.getElementById('quotes-list');
+  
   try {
     const quotes = await apiCall('/quotes');
     
-    const content = document.getElementById('quotes-list');
     if (!quotes || quotes.length === 0) {
       content.innerHTML = '<p class="no-data">Chưa có báo giá nào</p>';
       return;
@@ -292,7 +293,7 @@ async function loadQuotes() {
             <tr>
               <td><strong>${q.quote_number}</strong></td>
               <td>${formatDate(q.quote_date)}</td>
-              <td>${q.company_name}</td>
+              <td>${q.customer_name || q.name}</td>
               <td>${q.route_from} → ${q.route_to}</td>
               <td class="text-right"><strong>${formatCurrency(q.final_amount)}</strong></td>
               <td>
@@ -312,7 +313,8 @@ async function loadQuotes() {
       </table>
     `;
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error loading quotes:', error);
+    content.innerHTML = '<p class="no-data" style="color: orange;">⚠️ Chức năng Báo giá đang được phát triển</p>';
   }
 }
 
@@ -355,7 +357,7 @@ window.showCustomerModal = async function(customerId = null) {
           <div class="form-row">
             <div class="form-group">
               <label>🏢 Tên công ty *</label>
-              <input type="text" id="customerCompany" value="${customer?.company_name || ''}" required>
+              <input type="text" id="customerCompany" value="${customer?.name || ''}" required>
             </div>
             <div class="form-group">
               <label>🔢 Mã số thuế</label>
@@ -421,7 +423,7 @@ window.saveCustomer = async function(event, customerId) {
   
   try {
     const data = {
-      company_name: document.getElementById('customerCompany').value,
+      name: document.getElementById('customerCompany').value,
       tax_code: document.getElementById('customerTax').value,
       contact_person: document.getElementById('customerContact').value,
       phone: document.getElementById('customerPhone').value,
@@ -485,7 +487,7 @@ window.showQuoteModal = async function(quoteId = null, preSelectedCustomerId = n
                 <option value="">-- Chọn khách hàng --</option>
                 ${customers.map(c => `
                   <option value="${c.id}" ${(quote?.customer_id === c.id || preSelectedCustomerId === c.id) ? 'selected' : ''}>
-                    ${c.company_name}
+                    ${c.name}
                   </option>
                 `).join('')}
               </select>
@@ -679,7 +681,7 @@ window.viewQuote = async function(quoteId) {
                 <p><strong>Hiệu lực đến:</strong> ${quote.valid_until ? formatDate(quote.valid_until) : 'Không giới hạn'}</p>
               </div>
               <div>
-                <p><strong>Khách hàng:</strong> ${quote.company_name}</p>
+                <p><strong>Khách hàng:</strong> ${quote.customer_name || quote.name}</p>
                 <p><strong>Người liên hệ:</strong> ${quote.contact_person || '-'}</p>
                 <p><strong>Điện thoại:</strong> ${quote.customer_phone || '-'}</p>
               </div>
