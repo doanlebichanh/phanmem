@@ -190,12 +190,14 @@ window.renderCRM = async function(container) {
     <div class="page-header">
       <h1>👔 CRM & Báo Giá</h1>
       <div>
-        <button class="btn btn-secondary" onclick="showCustomerModal()">
-          <span>➕</span> Thêm Khách Hàng
-        </button>
-        <button class="btn btn-primary" onclick="showQuoteModal()">
-          <span>📄</span> Tạo Báo Giá
-        </button>
+        ${['admin', 'sales'].includes(currentUser.role) ? `
+          <button class="btn btn-secondary" onclick="openCustomerModalFromCRM()">
+            <span>➕</span> Thêm Khách Hàng
+          </button>
+          <button class="btn btn-primary" onclick="showQuoteModal()">
+            <span>📄</span> Tạo Báo Giá
+          </button>
+        ` : ''}
       </div>
     </div>
 
@@ -210,6 +212,21 @@ window.renderCRM = async function(container) {
 
   await loadCustomers();
   await loadQuotes();
+};
+
+// Use the shared customer modal from app.js, but refresh CRM list after save.
+window.openCustomerModalFromCRM = function(customerId = null) {
+  if (!['admin', 'sales'].includes(currentUser.role)) {
+    alert('Bạn không có quyền thao tác khách hàng (yêu cầu admin/sales).');
+    return;
+  }
+
+  // app.js `saveCustomer()` will call this if set.
+  window.onCustomerSaved = async () => {
+    await loadCustomers();
+  };
+
+  showCustomerModal(customerId);
 };
 
 async function loadCustomers() {
@@ -251,8 +268,10 @@ async function loadCustomers() {
                 </span>
               </td>
               <td class="actions">
-                <button class="btn btn-sm btn-info" onclick="editCustomer(${c.id})" title="Sửa">✏️</button>
-                <button class="btn btn-sm btn-success" onclick="createQuoteForCustomer(${c.id})" title="Báo giá">📄</button>
+                ${['admin', 'sales'].includes(currentUser.role) ? `
+                  <button class="btn btn-sm btn-info" onclick="openCustomerModalFromCRM(${c.id})" title="Sửa">✏️</button>
+                  <button class="btn btn-sm btn-success" onclick="createQuoteForCustomer(${c.id})" title="Báo giá">📄</button>
+                ` : ''}
               </td>
             </tr>
           `).join('')}
@@ -339,124 +358,6 @@ function getQuoteStatusText(status) {
   };
   return texts[status] || status;
 }
-
-window.showCustomerModal = async function(customerId = null) {
-  let customer = null;
-  if (customerId) {
-    customer = await apiCall(`/customers/${customerId}`);
-  }
-
-  const modal = `
-    <div class="modal-overlay" onclick="closeModal(event)">
-      <div class="modal" onclick="event.stopPropagation()">
-        <div class="modal-header">
-          <h2>👔 ${customerId ? 'Sửa' : 'Thêm'} Khách Hàng</h2>
-          <button class="modal-close" onclick="closeModal()">×</button>
-        </div>
-        <form id="customerForm" class="modal-body" onsubmit="saveCustomer(event, ${customerId})">
-          <div class="form-row">
-            <div class="form-group">
-              <label>🏢 Tên công ty *</label>
-              <input type="text" id="customerCompany" value="${customer?.name || ''}" required>
-            </div>
-            <div class="form-group">
-              <label>🔢 Mã số thuế</label>
-              <input type="text" id="customerTax" value="${customer?.tax_code || ''}">
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label>👤 Người liên hệ</label>
-              <input type="text" id="customerContact" value="${customer?.contact_person || ''}">
-            </div>
-            <div class="form-group">
-              <label>📞 Điện thoại</label>
-              <input type="text" id="customerPhone" value="${customer?.phone || ''}">
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>📧 Email</label>
-            <input type="email" id="customerEmail" value="${customer?.email || ''}">
-          </div>
-
-          <div class="form-group">
-            <label>🏠 Địa chỉ</label>
-            <textarea id="customerAddress" rows="2">${customer?.address || ''}</textarea>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label>💼 Loại khách hàng</label>
-              <select id="customerType">
-                <option value="individual" ${customer?.customer_type === 'individual' ? 'selected' : ''}>Cá nhân</option>
-                <option value="corporate" ${customer?.customer_type === 'corporate' ? 'selected' : ''}>Công ty</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>📊 Trạng thái</label>
-              <select id="customerStatus">
-                <option value="active" ${customer?.status === 'active' ? 'selected' : ''}>Hoạt động</option>
-                <option value="inactive" ${customer?.status === 'inactive' ? 'selected' : ''}>Ngưng</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>📝 Ghi chú</label>
-            <textarea id="customerNotes" rows="2">${customer?.notes || ''}</textarea>
-          </div>
-        </form>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal()">Hủy</button>
-          <button type="submit" form="customerForm" class="btn btn-primary">💾 Lưu</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('modalContainer').innerHTML = modal;
-};
-
-window.saveCustomer = async function(event, customerId) {
-  event.preventDefault();
-  
-  try {
-    const data = {
-      name: document.getElementById('customerCompany').value,
-      tax_code: document.getElementById('customerTax').value,
-      contact_person: document.getElementById('customerContact').value,
-      phone: document.getElementById('customerPhone').value,
-      email: document.getElementById('customerEmail').value,
-      address: document.getElementById('customerAddress').value,
-      customer_type: document.getElementById('customerType').value,
-      status: document.getElementById('customerStatus').value,
-      notes: document.getElementById('customerNotes').value
-    };
-
-    if (customerId) {
-      await apiCall(`/customers/${customerId}`, {
-        method: 'PUT',
-        body: JSON.stringify(data)
-      });
-    } else {
-      await apiCall('/customers', {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
-    }
-
-    alert('Đã lưu thành công!');
-    closeModal();
-    await loadCustomers();
-  } catch (error) {
-    alert('Lỗi: ' + error.message);
-  }
-};
-
-window.editCustomer = function(id) {
-  showCustomerModal(id);
-};
 
 window.showQuoteModal = async function(quoteId = null, preSelectedCustomerId = null) {
   const customers = await apiCall('/customers?status=active');

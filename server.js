@@ -754,7 +754,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
         d.name as driver_name,
         v.plate_number as vehicle_plate,
         cn.container_number,
-        r.route_name
+        COALESCE(r.route_name, TRIM(COALESCE(r.origin, '') || ' - ' || COALESCE(r.destination, ''))) AS route_name
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN drivers d ON o.driver_id = d.id
@@ -807,7 +807,8 @@ app.get('/api/orders/:id', authenticateToken, async (req, res) => {
         d.name as driver_name, d.phone as driver_phone,
         v.plate_number as vehicle_plate,
         cn.container_number,
-        r.route_name, r.origin, r.destination
+        COALESCE(r.route_name, TRIM(COALESCE(r.origin, '') || ' - ' || COALESCE(r.destination, ''))) AS route_name,
+        r.origin, r.destination
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN drivers d ON o.driver_id = d.id
@@ -841,29 +842,33 @@ app.post('/api/orders', authenticateToken, requireRole('admin', 'dispatcher'), a
       order_date, pickup_date, delivery_date,
       pickup_location, intermediate_point, delivery_location,
       cargo_description, quantity, weight, price, neo_xe, chi_ho, status, notes,
-      booking_number, bill_of_lading, seal_number, cargo_type
+      booking_number, bill_of_lading, seal_number, cargo_type, vat_rate
     } = req.body;
 
     // Tạo mã đơn hàng tự động
     const orderCode = 'ORD' + Date.now().toString().slice(-8);
     
-    // Tính final_amount (bao gồm VAT 10%)
-    const subtotal = (price || 0) + (neo_xe || 0) + (chi_ho || 0);
-    const final_amount = req.body.final_amount || Math.round(subtotal * 1.1);
+    // VAT: mặc định 10% (0.1). Có thể truyền vat_rate nếu cần.
+    const vatRate = (vat_rate !== undefined && vat_rate !== null && vat_rate !== '') ? Number(vat_rate) : 0.1;
+    const subtotal_amount = (Number(price) || 0) + (Number(neo_xe) || 0) + (Number(chi_ho) || 0);
+    const final_amount = (req.body.final_amount !== undefined && req.body.final_amount !== null && req.body.final_amount !== '')
+      ? Number(req.body.final_amount)
+      : Math.round(subtotal_amount * (1 + vatRate));
+    const vat_amount = final_amount - subtotal_amount;
 
     const result = await dbRun(
       `INSERT INTO orders (
         order_code, customer_id, route_id, container_id, vehicle_id, driver_id,
         order_date, pickup_date, delivery_date,
         pickup_location, intermediate_point, delivery_location,
-        cargo_description, quantity, weight, price, neo_xe, chi_ho, final_amount, status, notes, created_by,
+        cargo_description, quantity, weight, price, neo_xe, chi_ho, subtotal_amount, vat_rate, vat_amount, final_amount, status, notes, created_by,
         booking_number, bill_of_lading, seal_number, cargo_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderCode, customer_id, route_id, container_id, vehicle_id, driver_id,
         order_date, pickup_date, delivery_date,
         pickup_location, intermediate_point, delivery_location,
-        cargo_description, quantity, weight, price, neo_xe || 0, chi_ho || 0, final_amount, status || 'pending', notes, req.user.id,
+        cargo_description, quantity, weight, price, neo_xe || 0, chi_ho || 0, subtotal_amount, vatRate, vat_amount, final_amount, status || 'pending', notes, req.user.id,
         booking_number, bill_of_lading, seal_number, cargo_type
       ]
     );
@@ -902,28 +907,91 @@ app.put('/api/orders/:id', authenticateToken, requireRole('admin', 'dispatcher')
     
     // Get old data before update
     const oldOrder = await dbGet('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+
+    if (!oldOrder) {
+      return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+    }
     
-    // Nếu có thay đổi giá, tính lại final_amount và cập nhật công nợ
-    if (req.body.price || req.body.neo_xe || req.body.chi_ho || req.body.final_amount) {
+    // Nếu có thay đổi giá/khách, tính lại final_amount và cập nhật công nợ
+    const customerIdNew = req.body.customer_id !== undefined ? req.body.customer_id : oldOrder.customer_id;
+    const hasAmountChange = (
+      req.body.price !== undefined ||
+      req.body.neo_xe !== undefined ||
+      req.body.chi_ho !== undefined ||
+      req.body.final_amount !== undefined ||
+      req.body.vat_rate !== undefined
+    );
+    const hasCustomerChange = req.body.customer_id !== undefined && req.body.customer_id !== oldOrder.customer_id;
+
+    if (hasAmountChange || hasCustomerChange) {
       const newPrice = req.body.price !== undefined ? req.body.price : oldOrder.price;
       const newNeoXe = req.body.neo_xe !== undefined ? req.body.neo_xe : (oldOrder.neo_xe || 0);
       const newChiHo = req.body.chi_ho !== undefined ? req.body.chi_ho : (oldOrder.chi_ho || 0);
-      
-      if (!req.body.final_amount) {
-        const subtotal = newPrice + newNeoXe + newChiHo;
-        req.body.final_amount = Math.round(subtotal * 1.1);
+
+      const vatRate = (req.body.vat_rate !== undefined && req.body.vat_rate !== null && req.body.vat_rate !== '')
+        ? Number(req.body.vat_rate)
+        : (oldOrder.vat_rate !== undefined && oldOrder.vat_rate !== null ? Number(oldOrder.vat_rate) : 0.1);
+
+      const subtotalAmountNew = (Number(newPrice) || 0) + (Number(newNeoXe) || 0) + (Number(newChiHo) || 0);
+      req.body.subtotal_amount = subtotalAmountNew;
+
+      let finalAmountNew = req.body.final_amount;
+      if (finalAmountNew === undefined) {
+        finalAmountNew = Math.round(subtotalAmountNew * (1 + vatRate));
+        req.body.final_amount = finalAmountNew;
       }
-      
-      // Cập nhật công nợ: Trừ số cũ, cộng số mới
-      const oldFinalAmount = oldOrder.final_amount || 0;
-      const newFinalAmount = req.body.final_amount;
-      const debtDiff = newFinalAmount - oldFinalAmount;
-      
-      if (debtDiff !== 0) {
-        await dbRun(
-          'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
-          [debtDiff, oldOrder.customer_id]
+
+      req.body.vat_rate = vatRate;
+      req.body.vat_amount = Number(finalAmountNew) - Number(subtotalAmountNew);
+
+      const finalAmountOld = oldOrder.final_amount || 0;
+      if (hasCustomerChange) {
+        // Also move any recorded payments to keep customer debt consistent.
+        const paymentSumRow = await dbGet(
+          'SELECT COALESCE(SUM(amount), 0) as total_paid FROM payments WHERE order_id = ?',
+          [req.params.id]
         );
+        const totalPaid = paymentSumRow?.total_paid || 0;
+
+        if (totalPaid > 0) {
+          // Restore the reduction on old customer, apply it to new customer.
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+            [totalPaid, oldOrder.customer_id]
+          );
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) - ? WHERE id = ?',
+            [totalPaid, customerIdNew]
+          );
+
+          // Re-point payments to the new customer.
+          await dbRun(
+            'UPDATE payments SET customer_id = ? WHERE order_id = ?',
+            [customerIdNew, req.params.id]
+          );
+        }
+
+        // Move debt from old customer to new customer
+        if (finalAmountOld !== 0) {
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) - ? WHERE id = ?',
+            [finalAmountOld, oldOrder.customer_id]
+          );
+        }
+        if (finalAmountNew !== 0) {
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+            [finalAmountNew, customerIdNew]
+          );
+        }
+      } else {
+        const debtDiff = finalAmountNew - finalAmountOld;
+        if (debtDiff !== 0) {
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+            [debtDiff, oldOrder.customer_id]
+          );
+        }
       }
     }
     
@@ -932,7 +1000,9 @@ app.put('/api/orders/:id', authenticateToken, requireRole('admin', 'dispatcher')
       'customer_id', 'route_id', 'container_id', 'vehicle_id', 'driver_id',
       'order_date', 'pickup_date', 'delivery_date',
       'pickup_location', 'intermediate_point', 'delivery_location',
-      'cargo_description', 'quantity', 'weight', 'price', 'neo_xe', 'chi_ho', 'final_amount', 'status', 'notes',
+      'cargo_description', 'quantity', 'weight', 'price', 'neo_xe', 'chi_ho',
+      'subtotal_amount', 'vat_rate', 'vat_amount', 'final_amount',
+      'status', 'notes',
       'booking_number', 'bill_of_lading', 'seal_number', 'cargo_type'
     ];
     
@@ -984,6 +1054,26 @@ app.delete('/api/orders/:id', authenticateToken, requireRole('admin'), async (re
   try {
     // Lấy thông tin đơn hàng trước khi xóa
     const order = await dbGet('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+    }
+
+    // Hoàn trả ảnh hưởng của các phiếu thu (vì khi tạo phiếu thu đã trừ công nợ)
+    const payGroups = await dbAll(
+      'SELECT customer_id, COALESCE(SUM(amount), 0) as total_paid FROM payments WHERE order_id = ? GROUP BY customer_id',
+      [req.params.id]
+    );
+    if (payGroups && payGroups.length > 0) {
+      for (const g of payGroups) {
+        if (g.customer_id) {
+          await dbRun(
+            'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+            [g.total_paid || 0, g.customer_id]
+          );
+        }
+      }
+    }
     
     // Trừ công nợ khách hàng
     if (order && order.final_amount) {
@@ -1230,18 +1320,33 @@ app.get('/api/orders/:orderId/payments', authenticateToken, async (req, res) => 
 
 app.post('/api/orders/:orderId/payments', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
   try {
-    const { customer_id, payment_date, amount, payment_method, reference_number, notes } = req.body;
+    const { payment_date, amount, payment_method, reference_number, notes } = req.body;
+
+    if (!payment_date) {
+      return res.status(400).json({ error: 'Thiếu ngày thanh toán' });
+    }
+    const amt = Number(amount);
+    if (!amt || amt <= 0) {
+      return res.status(400).json({ error: 'Số tiền phải lớn hơn 0' });
+    }
+
+    // Always derive customer_id from the order to keep debt consistent.
+    const order = await dbGet('SELECT id, customer_id FROM orders WHERE id = ?', [req.params.orderId]);
+    if (!order) {
+      return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+    }
+    const customer_id = order.customer_id;
 
     const result = await dbRun(
       `INSERT INTO payments (order_id, customer_id, payment_date, amount, payment_method, reference_number, notes, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.orderId, customer_id, payment_date, amount, payment_method, reference_number, notes, req.user.id]
+      [req.params.orderId, customer_id, payment_date, amt, payment_method, reference_number, notes, req.user.id]
     );
 
     // Cập nhật công nợ khách hàng
     await dbRun(
-      'UPDATE customers SET current_debt = current_debt - ? WHERE id = ?',
-      [amount, customer_id]
+      'UPDATE customers SET current_debt = COALESCE(current_debt, 0) - ? WHERE id = ?',
+      [amt, customer_id]
     );
 
     const payment = await dbGet('SELECT * FROM payments WHERE id = ?', [result.lastID]);
@@ -1273,7 +1378,7 @@ app.delete('/api/payments/:id', authenticateToken, requireRole('admin', 'account
     
     if (payment) {
       await dbRun(
-        'UPDATE customers SET current_debt = current_debt + ? WHERE id = ?',
+        'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
         [payment.amount, payment.customer_id]
       );
     }
@@ -1349,12 +1454,12 @@ app.get('/api/drivers/:driverId/advances', authenticateToken, async (req, res) =
 // Tạo tạm ứng mới
 app.post('/api/orders/:orderId/advances', authenticateToken, requireRole('admin', 'dispatcher', 'accountant'), async (req, res) => {
   try {
-    const { driver_id, advance_date, amount, notes } = req.body;
+    const { driver_id, advance_date, amount, purpose, notes } = req.body;
 
     const result = await dbRun(
-      `INSERT INTO driver_advances (order_id, driver_id, advance_date, amount, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.params.orderId, driver_id, advance_date, amount, notes, req.user.id]
+      `INSERT INTO driver_advances (order_id, driver_id, advance_date, amount, purpose, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.orderId, driver_id, advance_date, amount, purpose || null, notes, req.user.id]
     );
 
     const advance = await dbGet('SELECT * FROM driver_advances WHERE id = ?', [result.lastID]);
@@ -1668,18 +1773,32 @@ app.get('/api/reports/overview', authenticateToken, async (req, res) => {
 // Báo cáo theo khách hàng
 app.get('/api/reports/customers', authenticateToken, async (req, res) => {
   try {
+    // Avoid double-counting orders when there are multiple payments.
     const report = await dbAll(`
-      SELECT 
+      WITH order_totals AS (
+        SELECT customer_id,
+               COUNT(*) as total_orders,
+               SUM(COALESCE(final_amount, 0)) as total_revenue
+        FROM orders
+        GROUP BY customer_id
+      ),
+      payment_totals AS (
+        SELECT o.customer_id as customer_id,
+               SUM(COALESCE(p.amount, 0)) as total_paid
+        FROM payments p
+        JOIN orders o ON p.order_id = o.id
+        GROUP BY o.customer_id
+      )
+      SELECT
         c.id,
         c.name,
-        COUNT(DISTINCT o.id) as total_orders,
-        COALESCE(SUM((o.price + COALESCE(o.neo_xe, 0) + COALESCE(o.chi_ho, 0)) * 1.1), 0) as total_revenue,
-        COALESCE(SUM(p.amount), 0) as total_paid,
-        COALESCE(SUM((o.price + COALESCE(o.neo_xe, 0) + COALESCE(o.chi_ho, 0)) * 1.1), 0) - COALESCE(SUM(p.amount), 0) as current_debt
+        COALESCE(ot.total_orders, 0) as total_orders,
+        COALESCE(ot.total_revenue, 0) as total_revenue,
+        COALESCE(pt.total_paid, 0) as total_paid,
+        COALESCE(ot.total_revenue, 0) - COALESCE(pt.total_paid, 0) as current_debt
       FROM customers c
-      LEFT JOIN orders o ON c.id = o.customer_id
-      LEFT JOIN payments p ON o.id = p.order_id
-      GROUP BY c.id
+      LEFT JOIN order_totals ot ON c.id = ot.customer_id
+      LEFT JOIN payment_totals pt ON c.id = pt.customer_id
       ORDER BY total_revenue DESC
     `);
     res.json(report);
@@ -1878,21 +1997,63 @@ app.post('/api/salaries', authenticateToken, requireRole('admin', 'accountant'),
       driver_id, 
       salary_month, 
       base_salary, 
-      trip_count, 
-      trip_bonus, 
       overtime_hours, 
       overtime_pay, 
-      deductions, 
-      advances_deducted, 
-      total_salary, 
       notes 
     } = req.body;
+
+    // Recompute to ensure consistency (client values can be stale)
+    const tripCountResult = await dbGet(`
+      SELECT COUNT(*) as count
+      FROM orders
+      WHERE driver_id = ?
+        AND status = 'completed'
+        AND strftime('%Y-%m', delivery_date) = ?
+    `, [driver_id, salary_month]);
+    const computedTripCount = tripCountResult?.count || 0;
+
+    const bonusPenalty = await dbGet(`
+      SELECT 
+        SUM(CASE WHEN type = 'bonus' THEN amount ELSE 0 END) as total_bonus,
+        SUM(CASE WHEN type = 'penalty' THEN amount ELSE 0 END) as total_penalty
+      FROM driver_bonuses_penalties
+      WHERE driver_id = ?
+        AND strftime('%Y-%m', date) = ?
+    `, [driver_id, salary_month]);
+    const computedTripBonus = bonusPenalty?.total_bonus || 0;
+    const computedDeductions = bonusPenalty?.total_penalty || 0;
+
+    const advanceResult = await dbGet(`
+      SELECT SUM(amount) as total_advance
+      FROM driver_advances
+      WHERE driver_id = ?
+        AND settled = 0
+        AND strftime('%Y-%m', advance_date) <= ?
+    `, [driver_id, salary_month]);
+    const computedAdvancesDeducted = advanceResult?.total_advance || 0;
+
+    const base = Number(base_salary) || 0;
+    const overtimePay = Number(overtime_pay) || 0;
+    const computedTotalSalary = base + computedTripBonus + overtimePay - computedDeductions - computedAdvancesDeducted;
     
     const result = await dbRun(`
       INSERT INTO driver_salaries 
       (driver_id, salary_month, base_salary, trip_count, trip_bonus, overtime_hours, overtime_pay, deductions, advances_deducted, total_salary, notes, status, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
-    `, [driver_id, salary_month, base_salary, trip_count, trip_bonus, overtime_hours || 0, overtime_pay || 0, deductions, advances_deducted, total_salary, notes, req.user.id]);
+    `, [
+      driver_id,
+      salary_month,
+      base,
+      computedTripCount,
+      computedTripBonus,
+      Number(overtime_hours) || 0,
+      overtimePay,
+      computedDeductions,
+      computedAdvancesDeducted,
+      computedTotalSalary,
+      notes,
+      req.user.id
+    ]);
     
     // Log audit
     logAudit(
@@ -1903,7 +2064,7 @@ app.post('/api/salaries', authenticateToken, requireRole('admin', 'accountant'),
       'salaries',
       result.lastID,
       null,
-      { driver_id, salary_month, total_salary },
+      { driver_id, salary_month, total_salary: computedTotalSalary },
       req.ip
     );
     
@@ -1923,6 +2084,15 @@ app.put('/api/salaries/:id', authenticateToken, requireRole('admin', 'accountant
     if (!oldSalary) {
       return res.status(404).json({ error: 'Không tìm thấy bản lương' });
     }
+
+    // Prevent rolling back after paid to avoid inconsistent settlements
+    if (oldSalary.status === 'paid' && status !== 'paid') {
+      return res.status(400).json({ error: 'Không thể đổi trạng thái sau khi đã trả lương' });
+    }
+
+    if (status === 'paid' && !paid_date) {
+      return res.status(400).json({ error: 'Thiếu ngày trả lương (paid_date)' });
+    }
     
     await dbRun(`
       UPDATE driver_salaries 
@@ -1930,13 +2100,13 @@ app.put('/api/salaries/:id', authenticateToken, requireRole('admin', 'accountant
       WHERE id = ?
     `, [status, paid_date, payment_method, notes, req.params.id]);
     
-    // Nếu đã trả lương, đánh dấu các tạm ứng là đã quyết toán
-    if (status === 'paid' && oldSalary.advances_deducted > 0) {
+    // Nếu đã trả lương, đánh dấu các tạm ứng là đã quyết toán (luôn chạy để không bỏ sót tạm ứng phát sinh sau khi tạo bản lương)
+    if (status === 'paid') {
       await dbRun(`
         UPDATE driver_advances 
-        SET settled = 1, settlement_date = ?
+        SET settled = 1, settlement_date = ?, salary_id = ?
         WHERE driver_id = ? AND settled = 0 AND strftime('%Y-%m', advance_date) <= ?
-      `, [paid_date, oldSalary.driver_id, oldSalary.salary_month]);
+      `, [paid_date, req.params.id, oldSalary.driver_id, oldSalary.salary_month]);
     }
     
     // Log audit
@@ -2660,13 +2830,27 @@ app.delete('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'acc
 app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
   try {
     const { from, to } = req.query;
-    const dateFilter = from && to ? `AND date BETWEEN '${from}' AND '${to}'` : '';
+
+    const buildDateFilter = (columnName) => {
+      let clause = '';
+      const params = [];
+      if (from) {
+        clause += ` AND ${columnName} >= ?`;
+        params.push(from);
+      }
+      if (to) {
+        clause += ` AND ${columnName} <= ?`;
+        params.push(to);
+      }
+      return { clause, params };
+    };
     
     const consolidated = [];
     
     // ========== THU (TIỀN THỰC TẾ NHẬN ĐƯỢC) ==========
     // 1. Thanh toán từ khách hàng (payments)
     try {
+      const df = buildDateFilter('p.payment_date');
       const payments = await dbAll(`
         SELECT 
           'income' as type,
@@ -2683,55 +2867,58 @@ app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
         JOIN orders o ON p.order_id = o.id
         JOIN customers c ON o.customer_id = c.id
         WHERE p.payment_date IS NOT NULL
-          ${dateFilter.replace('date', 'p.payment_date')}
+          ${df.clause}
         ORDER BY p.payment_date DESC
-      `);
+      `, df.params);
       if (payments && payments.length > 0) consolidated.push(...payments);
     } catch (e) { console.log('Skip payments:', e.message); }
     
     // ========== CHI (TẤT CẢ CHI PHÍ THỰC TẾ) ==========
     // 2. Lương tài xế đã trả
     try {
+      const df = buildDateFilter('s.paid_date');
       const salaries = await dbAll(`
         SELECT 
           'expense' as type,
           'Lương tài xế' as category,
           d.name || ' - Tháng ' || s.salary_month as description,
           s.total_salary as amount,
-          s.payment_date as transaction_date,
+          s.paid_date as transaction_date,
           'SALARY-' || s.id as reference,
           'salary' as source
-        FROM salaries s
+        FROM driver_salaries s
         JOIN drivers d ON s.driver_id = d.id
-        WHERE s.status = 'paid' AND s.payment_date IS NOT NULL
-          ${dateFilter.replace('date', 's.payment_date')}
-        ORDER BY s.payment_date DESC
-      `);
+        WHERE s.status = 'paid' AND s.paid_date IS NOT NULL
+          ${df.clause}
+        ORDER BY s.paid_date DESC
+      `, df.params);
       if (salaries && salaries.length > 0) consolidated.push(...salaries);
     } catch (e) { console.log('Skip salaries:', e.message); }
     
     // 3. Nhiên liệu
     try {
+      const df = buildDateFilter('fr.fuel_date');
       const fuel = await dbAll(`
         SELECT 
           'expense' as type,
           'Nhiên liệu' as category,
           v.plate_number || ' - ' || fr.liters || 'L @ ' || fr.price_per_liter || 'đ/L' as description,
           fr.total_cost as amount,
-          fr.refuel_date as transaction_date,
+          fr.fuel_date as transaction_date,
           'FUEL-' || fr.id as reference,
           'fuel' as source
         FROM fuel_records fr
         JOIN vehicles v ON fr.vehicle_id = v.id
-        WHERE fr.refuel_date IS NOT NULL
-          ${dateFilter.replace('date', 'fr.refuel_date')}
-        ORDER BY fr.refuel_date DESC
-      `);
+        WHERE fr.fuel_date IS NOT NULL
+          ${df.clause}
+        ORDER BY fr.fuel_date DESC
+      `, df.params);
       if (fuel && fuel.length > 0) consolidated.push(...fuel);
     } catch (e) { console.log('Skip fuel:', e.message); }
     
     // 4. Bảo dưỡng xe
     try {
+      const df = buildDateFilter('m.maintenance_date');
       const maintenance = await dbAll(`
         SELECT 
           'expense' as type,
@@ -2741,42 +2928,66 @@ app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
           m.maintenance_date as transaction_date,
           'MAINT-' || m.id as reference,
           'maintenance' as source
-        FROM maintenance m
+        FROM vehicle_maintenance m
         JOIN vehicles v ON m.vehicle_id = v.id
         WHERE m.maintenance_date IS NOT NULL
-          ${dateFilter.replace('date', 'm.maintenance_date')}
+          ${df.clause}
         ORDER BY m.maintenance_date DESC
-      `);
+      `, df.params);
       if (maintenance && maintenance.length > 0) consolidated.push(...maintenance);
     } catch (e) { console.log('Skip maintenance:', e.message); }
+
+    // 4b. Phí xe (đăng kiểm/bảo hiểm/...) đã trả
+    try {
+      const df = buildDateFilter('f.paid_date');
+      const vehicleFees = await dbAll(`
+        SELECT
+          'expense' as type,
+          'Phí xe' as category,
+          v.plate_number || ' - ' || f.fee_type as description,
+          f.amount as amount,
+          f.paid_date as transaction_date,
+          'VFE-' || f.id as reference,
+          'vehicle_fee' as source
+        FROM vehicle_fees f
+        JOIN vehicles v ON f.vehicle_id = v.id
+        WHERE f.paid_date IS NOT NULL
+          ${df.clause}
+        ORDER BY f.paid_date DESC
+      `, df.params);
+      if (vehicleFees && vehicleFees.length > 0) consolidated.push(...vehicleFees);
+    } catch (e) { console.log('Skip vehicle fees:', e.message); }
     
     // 5. Chi phí chuyến (trip_costs)
     try {
+      const dateExpr = `COALESCE(tc.cost_date, o.delivery_date, o.order_date)`;
+      const df = buildDateFilter(dateExpr);
       const tripCosts = await dbAll(`
         SELECT 
           'expense' as type,
           tc.cost_type as category,
-          o.order_code || ' - ' || COALESCE(tc.description, tc.cost_type) as description,
+          o.order_code || ' - ' || COALESCE(tc.notes, tc.receipt_number, tc.cost_type) as description,
           tc.amount,
-          COALESCE(tc.date, o.delivery_date, o.order_date) as transaction_date,
+          ${dateExpr} as transaction_date,
           'COST-' || tc.id as reference,
           'trip_cost' as source
         FROM trip_costs tc
         JOIN orders o ON tc.order_id = o.id
         WHERE 1=1
-          ${dateFilter.replace('date', 'COALESCE(tc.date, o.delivery_date, o.order_date)')}
+          ${df.clause}
         ORDER BY transaction_date DESC
-      `);
+      `, df.params);
       if (tripCosts && tripCosts.length > 0) consolidated.push(...tripCosts);
     } catch (e) { console.log('Skip trip_costs:', e.message); }
     
     // 6. Tạm ứng cho tài xế
     try {
+      const df = buildDateFilter('da.advance_date');
       const advances = await dbAll(`
         SELECT 
           'expense' as type,
           'Tạm ứng tài xế' as category,
-          d.name || ' - ' || COALESCE(da.reason, 'Tạm ứng') as description,
+          d.name || ' - ' || COALESCE(da.purpose, da.notes, 'Tạm ứng') as description,
           da.amount,
           da.advance_date as transaction_date,
           'ADV-' || da.id as reference,
@@ -2784,37 +2995,15 @@ app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
         FROM driver_advances da
         JOIN drivers d ON da.driver_id = d.id
         WHERE da.advance_date IS NOT NULL
-          ${dateFilter.replace('date', 'da.advance_date')}
+          ${df.clause}
         ORDER BY da.advance_date DESC
-      `);
+      `, df.params);
       if (advances && advances.length > 0) consolidated.push(...advances);
     } catch (e) { console.log('Skip advances:', e.message); }
     
-    // 7. Chi hồ, nẹo xe từ orders (đã trả thực tế)
+    // 7. Thu/Chi thủ công khác (ngoài hệ thống)
     try {
-      const orderFees = await dbAll(`
-        SELECT 
-          'expense' as type,
-          CASE 
-            WHEN chi_ho > 0 AND neo_xe > 0 THEN 'Chi hồ + Nẹo xe'
-            WHEN chi_ho > 0 THEN 'Chi hồ'
-            WHEN neo_xe > 0 THEN 'Nẹo xe'
-          END as category,
-          order_code || ' - ' || COALESCE(pickup_location, '') as description,
-          (COALESCE(chi_ho, 0) + COALESCE(neo_xe, 0)) as amount,
-          COALESCE(delivery_date, order_date) as transaction_date,
-          'FEE-' || id as reference,
-          'order_fee' as source
-        FROM orders
-        WHERE (chi_ho > 0 OR neo_xe > 0)
-          ${dateFilter.replace('date', 'COALESCE(delivery_date, order_date)')}
-        ORDER BY transaction_date DESC
-      `);
-      if (orderFees && orderFees.length > 0) consolidated.push(...orderFees);
-    } catch (e) { console.log('Skip order fees:', e.message); }
-    
-    // 8. Thu/Chi thủ công khác (ngoài hệ thống)
-    try {
+      const df = buildDateFilter('transaction_date');
       const manual = await dbAll(`
         SELECT 
           type,
@@ -2826,9 +3015,9 @@ app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
           'manual' as source
         FROM cash_flow
         WHERE 1=1
-          ${dateFilter.replace('date', 'transaction_date')}
+          ${df.clause}
         ORDER BY transaction_date DESC
-      `);
+      `, df.params);
       if (manual && manual.length > 0) consolidated.push(...manual);
     } catch (e) { console.log('Skip cash_flow:', e.message); }
     
@@ -3247,26 +3436,21 @@ app.post('/api/customers', authenticateToken, requireRole('admin', 'sales'), asy
       return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
     }
     
-    const query = `
-      INSERT INTO customers (
+    const result = await dbRun(
+      `INSERT INTO customers (
         name, tax_code, contact_person, phone, email, address,
         customer_type, credit_limit, payment_terms, status, notes, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    
-    db.run(query, [
-      trimmedName, tax_code, contact_person, phone, email, address,
-      customer_type || 'individual', credit_limit || 0, payment_terms || 'COD',
-      status || 'active', notes, req.user.userId
-    ], function(err) {
-      if (err) {
-        console.error('Lỗi tạo customer:', err);
-        return res.status(500).json({ error: 'Lỗi tạo khách hàng' });
-      }
-      
-      logAudit(req.user.userId, 'create', 'customers', this.lastID, { name });
-      res.json({ id: this.lastID, message: 'Đã tạo khách hàng' });
-    });
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        trimmedName, tax_code, contact_person, phone, email, address,
+        customer_type || 'individual', credit_limit || 0, payment_terms || 'COD',
+        status || 'active', notes, req.user.id
+      ]
+    );
+
+    const created = await dbGet('SELECT * FROM customers WHERE id = ?', [result.lastID]);
+    logAudit(req.user.id, req.user.username, req.user.role, 'create', 'customers', result.lastID, null, created, req.ip);
+    res.json({ id: result.lastID, message: 'Đã tạo khách hàng' });
   } catch (error) {
     console.error('Lỗi customer:', error);
     res.status(500).json({ error: error.message });
@@ -3298,31 +3482,31 @@ app.put('/api/customers/:id', authenticateToken, requireRole('admin', 'sales'), 
       return res.status(400).json({ error: 'Tên công ty là bắt buộc' });
     }
     
-    const query = `
-      UPDATE customers SET
+    const oldCustomer = await dbGet('SELECT * FROM customers WHERE id = ?', [req.params.id]);
+    if (!oldCustomer) {
+      return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    }
+
+    const result = await dbRun(
+      `UPDATE customers SET
         name = ?, tax_code = ?, contact_person = ?, phone = ?,
         email = ?, address = ?, customer_type = ?, credit_limit = ?,
         payment_terms = ?, status = ?, notes = ?
-      WHERE id = ?
-    `;
-    
-    db.run(query, [
-      trimmedName, tax_code, contact_person, phone, email, address,
-      customer_type, credit_limit, payment_terms, status, notes,
-      req.params.id
-    ], function(err) {
-      if (err) {
-        console.error('Lỗi update customer:', err);
-        return res.status(500).json({ error: 'Lỗi cập nhật khách hàng' });
-      }
-      
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
-      }
-      
-      logAudit(req.user.userId, 'update', 'customers', req.params.id, { name });
-      res.json({ message: 'Đã cập nhật khách hàng' });
-    });
+      WHERE id = ?`,
+      [
+        trimmedName, tax_code, contact_person, phone, email, address,
+        customer_type, credit_limit, payment_terms, status, notes,
+        req.params.id
+      ]
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+    }
+
+    const updated = await dbGet('SELECT * FROM customers WHERE id = ?', [req.params.id]);
+    logAudit(req.user.id, req.user.username, req.user.role, 'update', 'customers', req.params.id, oldCustomer, updated, req.ip);
+    res.json({ message: 'Đã cập nhật khách hàng' });
   } catch (error) {
     console.error('Lỗi customer:', error);
     res.status(500).json({ error: error.message });
@@ -3432,7 +3616,7 @@ app.post('/api/quotes', authenticateToken, requireRole('admin', 'sales'), async 
     db.run(query, [
       quote_number, customer_id, quote_date, valid_until, route_from, route_to,
       container_type, cargo_description, quantity || 1, unit_price, total_amount,
-      discount_amount || 0, tax_amount || 0, final_amount, notes, req.user.userId
+      discount_amount || 0, tax_amount || 0, final_amount, notes, req.user.id
     ], function(err) {
       if (err) {
         console.error('Lỗi tạo quote:', err);
@@ -3442,7 +3626,7 @@ app.post('/api/quotes', authenticateToken, requireRole('admin', 'sales'), async 
         return res.status(500).json({ error: 'Lỗi tạo báo giá' });
       }
       
-      logAudit(req.user.userId, 'create', 'quotes', this.lastID, { quote_number });
+      logAudit(req.user.id, req.user.username, req.user.role, 'create', 'quotes', this.lastID, null, { quote_number }, req.ip);
       res.json({ id: this.lastID, message: 'Đã tạo báo giá' });
     });
   } catch (error) {
@@ -3455,7 +3639,7 @@ app.post('/api/quotes', authenticateToken, requireRole('admin', 'sales'), async 
 app.put('/api/quotes/:id', authenticateToken, requireRole('admin', 'sales'), async (req, res) => {
   try {
     // Check if quote is draft
-    db.get('SELECT status FROM quotes WHERE id = ?', [req.params.id], (err, row) => {
+    db.get('SELECT * FROM quotes WHERE id = ?', [req.params.id], (err, row) => {
       if (err) {
         console.error('Lỗi query quote:', err);
         return res.status(500).json({ error: 'Lỗi kiểm tra báo giá' });
@@ -3466,6 +3650,8 @@ app.put('/api/quotes/:id', authenticateToken, requireRole('admin', 'sales'), asy
       if (row.status !== 'draft') {
         return res.status(400).json({ error: 'Chỉ có thể sửa báo giá ở trạng thái Nháp' });
       }
+
+      const oldQuote = row;
       
       const {
         customer_id, quote_date, valid_until, route_from, route_to,
@@ -3490,8 +3676,14 @@ app.put('/api/quotes/:id', authenticateToken, requireRole('admin', 'sales'), asy
           console.error('Lỗi update quote:', err);
           return res.status(500).json({ error: 'Lỗi cập nhật báo giá' });
         }
-        
-        logAudit(req.user.userId, 'update', 'quotes', req.params.id);
+
+        const newQuote = {
+          ...oldQuote,
+          customer_id, quote_date, valid_until, route_from, route_to,
+          container_type, cargo_description, quantity, unit_price, total_amount,
+          discount_amount, tax_amount, final_amount, notes
+        };
+        logAudit(req.user.id, req.user.username, req.user.role, 'update', 'quotes', req.params.id, oldQuote, newQuote, req.ip);
         res.json({ message: 'Đã cập nhật báo giá' });
       });
     });
@@ -3504,6 +3696,11 @@ app.put('/api/quotes/:id', authenticateToken, requireRole('admin', 'sales'), asy
 // Approve quote
 app.put('/api/quotes/:id/approve', authenticateToken, requireRole('admin', 'sales'), async (req, res) => {
   try {
+    const oldQuote = await dbGet('SELECT * FROM quotes WHERE id = ?', [req.params.id]);
+    if (!oldQuote) {
+      return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    }
+
     db.run(
       'UPDATE quotes SET status = ? WHERE id = ?',
       ['approved', req.params.id],
@@ -3517,7 +3714,7 @@ app.put('/api/quotes/:id/approve', authenticateToken, requireRole('admin', 'sale
           return res.status(404).json({ error: 'Không tìm thấy báo giá' });
         }
         
-        logAudit(req.user.userId, 'approve', 'quotes', req.params.id);
+        logAudit(req.user.id, req.user.username, req.user.role, 'approve', 'quotes', req.params.id, oldQuote, { ...oldQuote, status: 'approved' }, req.ip);
         res.json({ message: 'Đã duyệt báo giá' });
       }
     );
@@ -3546,54 +3743,83 @@ app.post('/api/quotes/:id/convert', authenticateToken, requireRole('admin', 'sal
         return res.status(400).json({ error: 'Báo giá đã được chuyển thành đơn hàng' });
       }
       
-      // Get customer info
-      db.get('SELECT * FROM customers WHERE id = ?', [quote.customer_id], (err, customer) => {
-        if (err || !customer) {
-          return res.status(500).json({ error: 'Lỗi lấy thông tin khách hàng' });
-        }
-        
-        // Create order
-        const orderCode = `DH${new Date().getFullYear()}${String(Date.now()).slice(-6)}`;
-        const orderQuery = `
-          INSERT INTO orders (
-            order_code, customer_name, customer_phone, order_date, pickup_location,
-            delivery_location, cargo_description, container_type, quantity, unit_price,
-            total_amount, notes, status, created_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-        `;
-        
-        db.run(orderQuery, [
-          orderCode, customer.company_name, customer.phone, new Date().toISOString().split('T')[0],
-          quote.route_from, quote.delivery_location, quote.cargo_description,
-          quote.container_type, quote.quantity, quote.unit_price, quote.final_amount,
-          `Từ báo giá ${quote.quote_number}`, req.user.userId
-        ], function(err) {
+      // Create order using the real "orders" schema used by the rest of the system
+      const orderCode = 'ORD' + Date.now().toString().slice(-8);
+      const orderDate = (quote.quote_date || new Date().toISOString().split('T')[0]);
+
+      // Quote: total_amount = quantity*unit_price; discount_amount applied before VAT.
+      const priceAfterDiscount = (quote.total_amount || 0) - (quote.discount_amount || 0);
+      const finalAmount = quote.final_amount || Math.round((priceAfterDiscount || 0) * 1.1);
+
+      const orderQuery = `
+        INSERT INTO orders (
+          order_code, customer_id,
+          order_date,
+          pickup_location, delivery_location,
+          cargo_description, quantity,
+          price, neo_xe, chi_ho, final_amount,
+          status, notes, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      db.run(
+        orderQuery,
+        [
+          orderCode,
+          quote.customer_id,
+          orderDate,
+          quote.route_from,
+          quote.route_to,
+          quote.cargo_description,
+          quote.quantity || 1,
+          priceAfterDiscount,
+          0,
+          0,
+          finalAmount,
+          'pending',
+          `Từ báo giá ${quote.quote_number}`,
+          req.user.id
+        ],
+        async function(err) {
           if (err) {
             console.error('Lỗi tạo order:', err);
             return res.status(500).json({ error: 'Lỗi tạo đơn hàng' });
           }
-          
+
           const orderId = this.lastID;
-          
-          // Update quote
-          db.run(
-            'UPDATE quotes SET converted_order_id = ? WHERE id = ?',
-            [orderId, req.params.id],
-            (err) => {
-              if (err) {
-                console.error('Lỗi update quote:', err);
-              }
-              
-              logAudit(req.user.userId, 'convert', 'quotes', req.params.id, { order_id: orderId });
-              res.json({ 
-                order_id: orderId, 
-                order_code: orderCode,
-                message: 'Đã chuyển báo giá thành đơn hàng' 
-              });
-            }
-          );
-        });
-      });
+
+          try {
+            // Update quote converted id
+            await dbRun('UPDATE quotes SET converted_order_id = ? WHERE id = ?', [orderId, req.params.id]);
+            // Update customer debt (like normal order create)
+            await dbRun(
+              'UPDATE customers SET current_debt = COALESCE(current_debt, 0) + ? WHERE id = ?',
+              [finalAmount, quote.customer_id]
+            );
+
+            logAudit(
+              req.user.id,
+              req.user.username,
+              req.user.role,
+              'convert',
+              'quotes',
+              req.params.id,
+              quote,
+              { order_id: orderId, order_code: orderCode },
+              req.ip
+            );
+
+            res.json({
+              order_id: orderId,
+              order_code: orderCode,
+              message: 'Đã chuyển báo giá thành đơn hàng'
+            });
+          } catch (e) {
+            console.error('Lỗi sau khi tạo order từ quote:', e);
+            res.status(500).json({ error: 'Tạo đơn thành công nhưng lỗi cập nhật liên quan' });
+          }
+        }
+      );
     });
   } catch (error) {
     console.error('Lỗi quote:', error);

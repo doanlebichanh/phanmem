@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 package-lock.json
+yarn.lock
 
 # Database files
 *.db
@@ -13,6 +14,7 @@ freight.db
 # Logs
 *.log
 npm-debug.log*
+yarn-error.log*
 
 # OS files
 .DS_Store
@@ -29,6 +31,15 @@ desktop.ini
 dist/
 build/
 out/
+release/
+releases/
+
+# Electron build output (large exe/installer files)
+*.exe
+*.msi
+*.dmg
+*.zip
+*.tar.gz
 
 # Test & Debug files
 test-*.html
@@ -39,8 +50,13 @@ quick-test.html
 *.tmp
 *.bak
 *~
+*.cache
 
 # Documentation (internal)
 CHANGES_SUMMARY.md
 FIX_LOG_LUONG.md
 TEST_FEATURES.md
+
+# node Electron build
+dist_electron/
+electron-app-build/

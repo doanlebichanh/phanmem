@@ -160,9 +160,11 @@ API backend (chính):
 
 Điểm đáng chú ý trong triển khai:
 - Khi tạo đơn: tự sinh `order_code` kiểu `ORDxxxxxxxx`.
-- Tính `final_amount` mặc định theo VAT 10%:
-  - `subtotal = price + neo_xe + chi_ho`
-  - `final_amount = round(subtotal * 1.1)`
+- Tính tiền & VAT:
+  - `subtotal_amount = price + neo_xe + chi_ho`
+  - `vat_rate` mặc định `0.1` (VAT 10%)
+  - `final_amount = round(subtotal_amount * (1 + vat_rate))` (nếu không nhập tay)
+  - Lưu thêm `vat_amount = final_amount - subtotal_amount` để phục vụ báo cáo VAT/công nợ
 - Khi tạo/sửa/xóa đơn: cập nhật `customers.current_debt` để phản ánh công nợ.
 - Hỗ trợ các trường mở rộng: `booking_number`, `bill_of_lading`, `seal_number`, `cargo_type`.
 
@@ -196,6 +198,10 @@ Cách tính công nợ:
 - Khi ghi nhận thanh toán: trừ `customers.current_debt`.
 - Khi xóa thanh toán: cộng trả lại vào `customers.current_debt`.
 
+Lưu ý quan trọng:
+- `customer_id` của thanh toán được lấy theo `orders.customer_id` (không tin dữ liệu client) để tránh lệch công nợ khi đổi khách/nhập sai.
+- Khi xóa đơn hàng, hệ thống hoàn trả lại ảnh hưởng của các phiếu thu trước khi trừ `final_amount`.
+
 ---
 
 ### 6.5 Tạm ứng tài xế (Driver advances)
@@ -212,7 +218,7 @@ API backend:
 
 Gắn kết với lương:
 - Khi tính lương tháng, hệ thống lấy tổng tạm ứng chưa quyết toán (`settled = 0`) để trừ vào lương.
-- Khi bản lương chuyển `paid`, hệ thống tự đánh dấu các tạm ứng liên quan là `settled`.
+- Khi bản lương chuyển `paid`, hệ thống tự đánh dấu các tạm ứng liên quan là `settled` (theo tháng lương) và ghi `salary_id` để truy vết.
 
 ---
 
@@ -301,7 +307,11 @@ UI:
 - Dùng API consolidated để “tự tổng hợp” dữ liệu.
 
 API backend:
-- `GET /api/cash-flow/consolidated` (tổng hợp từ: payments, lương đã trả, nhiên liệu, bảo dưỡng, trip_costs, tạm ứng, chi hồ/nẹo xe từ orders, và các khoản nhập thủ công)
+- `GET /api/cash-flow/consolidated` (tổng hợp từ: payments, lương đã trả, nhiên liệu, bảo dưỡng, phí xe, trip_costs, tạm ứng, và các khoản nhập thủ công)
+
+Quy ước dòng tiền (cash-basis):
+- Các khoản `Chi hộ/Nẹo xe` không tự lấy từ trường `orders.chi_ho/neo_xe` (vì không có ngày chi thực tế).
+- Nếu phát sinh chi hộ/nẹo xe, hãy nhập vào `trip_costs` (có `cost_date`) hoặc nhập Thu/Chi thủ công để lên dòng tiền đúng ngày.
 - CRUD thu/chi thủ công:
   - `GET /api/cash-flow`
   - `GET /api/cash-flow/:id`

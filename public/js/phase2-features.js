@@ -535,8 +535,8 @@ async function loadCashFlow() {
       <div class="alert alert-info" style="margin-bottom: 15px;">
         <strong>ℹ️ Lưu ý:</strong> Dữ liệu bên dưới được tự động tổng hợp từ:
         <ul style="margin: 10px 0 0 20px;">
-          <li>💵 <strong>Thu</strong>: Doanh thu từ các đơn hàng đã giao</li>
-          <li>💸 <strong>Chi</strong>: Lương tài xế, nhiên liệu, bảo dưỡng, chi phí chuyến</li>
+          <li>💵 <strong>Thu</strong>: Thanh toán khách hàng + khoản thu thủ công</li>
+          <li>💸 <strong>Chi</strong>: Lương, nhiên liệu, bảo dưỡng, phí xe, chi phí chuyến (bao gồm chi hộ/nẹo xe nếu bạn nhập vào Chi phí chuyến), tạm ứng + khoản chi thủ công</li>
           <li>📝 Các khoản thu/chi ngoài hệ thống nhập thủ công</li>
         </ul>
       </div>
@@ -581,11 +581,13 @@ async function loadCashFlow() {
     // Helper function to get source display name
     function getSourceName(source) {
       const names = {
-        'order': '📦 Đơn hàng',
+        'payment': '💵 Thanh toán',
         'salary': '💼 Lương',
         'fuel': '⛽ Nhiên liệu',
         'maintenance': '🔧 Bảo dưỡng',
+        'vehicle_fee': '🧾 Phí xe',
         'trip_cost': '🚚 Chi phí chuyến',
+        'advance': '💳 Tạm ứng',
         'manual': '✏️ Thủ công'
       };
       return names[source] || source;

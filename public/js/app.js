@@ -602,7 +602,9 @@ async function renderOrders(container) {
                     <th>Tuyến</th>
                     <th>Container</th>
                     <th>Tài xế</th>
-                    <th>Ngày</th>
+                    <th>Ngày đặt</th>
+                    <th>Từ - Đến</th>
+                    <th>Hàng hóa</th>
                     <th>Trạng thái</th>
                     <th>Giá cước</th>
                     <th>Thao tác</th>
@@ -617,10 +619,13 @@ async function renderOrders(container) {
                       <td>${order.container_number || '-'}</td>
                       <td>${order.driver_name || '-'}</td>
                       <td>${formatDate(order.order_date)}</td>
+                      <td><small>${order.pickup_location ? order.pickup_location.substring(0, 15) + '...' : '-'} → ${order.delivery_location ? order.delivery_location.substring(0, 15) + '...' : '-'}</small></td>
+                      <td><small>${order.cargo_description ? order.cargo_description.substring(0, 20) + '...' : '-'}</small></td>
                       <td>${getStatusBadge(order.status)}</td>
                       <td class="text-right"><strong>${formatMoney(order.price)}</strong></td>
                       <td class="actions">
                         <button class="btn btn-sm btn-primary" onclick="viewOrderDetail(${order.id})">Chi tiết</button>
+                        ${currentUser.role === 'admin' || currentUser.role === 'dispatcher' ? `<button class="btn btn-sm btn-warning" onclick="showOrderModal(${order.id})">Sửa</button>` : ''}
                         ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteOrder(${order.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
@@ -966,6 +971,7 @@ async function viewOrderDetail(orderId) {
           <div class="modal-header">
             <h2>Chi tiết đơn hàng: ${order.order_code}</h2>
             <span class="badge ${order.status === 'completed' ? 'badge-active' : order.status === 'in-transit' ? 'badge-warning' : 'badge-pending'}">${getStatusBadge(order.status)}</span>
+            <button class="btn btn-sm btn-primary" onclick="editOrderFromDetail(${orderId})">✏️ Chỉnh sửa</button>
             <button class="modal-close" onclick="closeModal()">×</button>
           </div>
           <div class="modal-body">
@@ -1223,6 +1229,8 @@ function showCostModal(orderId) {
             <label>Loại chi phí *</label>
             <select name="cost_type" id="costType" onchange="toggleFuelFields(this.value)" required>
               <option value="Dầu xe">Dầu xe</option>
+              <option value="Chi hộ">Chi hộ</option>
+              <option value="Nẹo xe">Nẹo xe</option>
               <option value="Phí cầu đường">Phí cầu đường</option>
               <option value="Phí bãi xe">Phí bãi xe</option>
               <option value="Bốc xếp">Bốc xếp</option>
@@ -1294,6 +1302,225 @@ function toggleFuelFields(costType) {
     fuelFields.style.display = 'none';
     document.getElementById('fuelLiters').value = '';
     document.getElementById('fuelPrice').value = '';
+  }
+}
+
+async function editOrderFromDetail(orderId) {
+  try {
+    // Close current detail modal
+    closeModal();
+    
+    // Load fresh order data
+    const order = await apiCall(`/orders/${orderId}`);
+    const { customers, containers, drivers, vehicles, routes } = window.ordersData;
+    
+    const modal = `
+      <div class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h2>✏️ Chỉnh sửa đơn hàng: ${order.order_code}</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <form id="editOrderForm" class="modal-body" onsubmit="saveEditOrder(event, ${orderId})">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Khách hàng *</label>
+                <select name="customer_id" required>
+                  <option value="">-- Chọn khách hàng --</option>
+                  ${customers.map(c => \`
+                    <option value="\${c.id}" \${order.customer_id == c.id ? 'selected' : ''}>
+                      \${c.name}
+                    </option>
+                  \`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Ngày đặt hàng *</label>
+                <input type="date" name="order_date" value="\${formatDateForInput(order.order_date)}" required>
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Tuyến đường</label>
+                <select name="route_id">
+                  <option value="">-- Chọn tuyến --</option>
+                  ${routes.map(r => \`
+                    <option value="\${r.id}" \${order.route_id === r.id ? 'selected' : ''}>
+                      \${r.route_name}
+                    </option>
+                  \`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Container *</label>
+                <select name="container_id" required>
+                  <option value="">-- Chọn container --</option>
+                  ${containers.map(c => \`
+                    <option value="\${c.id}" \${order.container_id === c.id ? 'selected' : ''}>
+                      \${c.container_number}
+                    </option>
+                  \`).join('')}
+                </select>
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Xe vận chuyển</label>
+                <select name="vehicle_id">
+                  <option value="">-- Chọn xe --</option>
+                  ${vehicles.map(v => \`
+                    <option value="\${v.id}" \${order.vehicle_id === v.id ? 'selected' : ''}>
+                      \${v.plate_number}
+                    </option>
+                  \`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Tài xế</label>
+                <select name="driver_id">
+                  <option value="">-- Chọn tài xế --</option>
+                  ${drivers.map(d => \`
+                    <option value="\${d.id}" \${order.driver_id === d.id ? 'selected' : ''}>
+                      \${d.name}
+                    </option>
+                  \`).join('')}
+                </select>
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Địa điểm nhận hàng</label>
+                <input type="text" name="pickup_location" value="\${order.pickup_location || ''}" placeholder="VD: Kho số 1 tại Bình Dương">
+              </div>
+              <div class="form-group">
+                <label>Ngày nhận hàng</label>
+                <input type="date" name="pickup_date" value="\${order.pickup_date ? formatDateForInput(order.pickup_date) : ''}">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Địa điểm giao hàng</label>
+                <input type="text" name="delivery_location" value="\${order.delivery_location || ''}" placeholder="VD: Kho nhận tại TP.HCM">
+              </div>
+              <div class="form-group">
+                <label>Ngày giao hàng</label>
+                <input type="date" name="delivery_date" value="\${order.delivery_date ? formatDateForInput(order.delivery_date) : ''}">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Điểm dừng trung gian</label>
+                <input type="text" name="intermediate_point" value="\${order.intermediate_point || ''}" placeholder="Có nếu cần">
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label>Mô tả hàng hóa</label>
+              <textarea name="cargo_description" rows="2" placeholder="VD: 50 thùng carton hàng điện tử">\${order.cargo_description || ''}</textarea>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Số lượng</label>
+                <input type="number" name="quantity" step="0.01" value="\${order.quantity || ''}">
+              </div>
+              <div class="form-group">
+                <label>Trọng lượng (tấn)</label>
+                <input type="number" name="weight" step="0.01" value="\${order.weight || ''}">
+              </div>
+              <div class="form-group">
+                <label>Giá cước cơ bản (VND)</label>
+                <input type="number" name="price" step="1000" value="\${order.price || ''}" required>
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Nẹo xe (VND)</label>
+                <input type="number" name="neo_xe" step="1000" value="\${order.neo_xe || 0}">
+              </div>
+              <div class="form-group">
+                <label>Chi hộ (VND)</label>
+                <input type="number" name="chi_ho" step="1000" value="\${order.chi_ho || 0}">
+              </div>
+              <div class="form-group">
+                <label>Thuế VAT (%)</label>
+                <input type="number" name="vat_rate" step="0.01" value="\${(order.vat_rate ? order.vat_rate * 100 : 10)}">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Số hiệu vận đơn</label>
+                <input type="text" name="booking_number" value="\${order.booking_number || ''}" placeholder="VD: VĐ123456">
+              </div>
+              <div class="form-group">
+                <label>Số hiệu bộ hàng</label>
+                <input type="text" name="bill_of_lading" value="\${order.bill_of_lading || ''}" placeholder="VD: BH123456">
+              </div>
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Số seal</label>
+                <input type="text" name="seal_number" value="\${order.seal_number || ''}" placeholder="VD: SEAL123456">
+              </div>
+              <div class="form-group">
+                <label>Loại hàng hóa</label>
+                <input type="text" name="cargo_type" value="\${order.cargo_type || ''}" placeholder="VD: Điện tử, Hóa chất, v.v">
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label>Ghi chú</label>
+              <textarea name="notes" rows="2" placeholder="Thêm ghi chú nếu cần...">\${order.notes || ''}</textarea>
+            </div>
+            
+            <div class="form-group">
+              <label>Trạng thái</label>
+              <select name="status">
+                <option value="pending" \${order.status === 'pending' ? 'selected' : ''}>Chờ xử lý</option>
+                <option value="in-transit" \${order.status === 'in-transit' ? 'selected' : ''}>Đang vận chuyển</option>
+                <option value="completed" \${order.status === 'completed' ? 'selected' : ''}>Hoàn thành</option>
+              </select>
+            </div>
+          </form>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Hủy</button>
+            <button type="submit" form="editOrderForm" class="btn btn-primary">💾 Lưu thay đổi</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById('modalContainer').innerHTML = modal;
+  } catch (error) {
+    showError(null, 'Lỗi tải dữ liệu: ' + error.message);
+  }
+}
+
+async function saveEditOrder(e, orderId) {
+  e.preventDefault();
+  try {
+    const formData = new FormData(document.getElementById('editOrderForm'));
+    const data = Object.fromEntries(formData);
+    
+    // Convert VAT from % to decimal
+    if (data.vat_rate) {
+      data.vat_rate = parseFloat(data.vat_rate) / 100;
+    }
+    
+    await apiCall(\`/orders/\${orderId}\`, 'PUT', data);
+    showSuccess('Cập nhật đơn hàng thành công');
+    closeModal();
+    loadOrders();
+  } catch (error) {
+    showError(null, 'Lỗi cập nhật: ' + error.message);
   }
 }
 
@@ -1808,7 +2035,7 @@ async function renderCustomers(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>👥 Quản lý khách hàng</h1>
-        ${currentUser.role !== 'staff' ? `
+        ${['admin', 'sales'].includes(currentUser.role) ? `
         <button class="btn btn-primary" onclick="showCustomerModal()">
           ➕ Thêm khách hàng
         </button>
@@ -1882,6 +2109,22 @@ function showCustomerModal(customerId = null) {
           </div>
           <div class="form-row">
             <div class="form-group">
+              <label>Loại khách hàng</label>
+              <select name="customer_type">
+                <option value="individual" ${customer && customer.customer_type === 'individual' ? 'selected' : ''}>Cá nhân</option>
+                <option value="corporate" ${customer && customer.customer_type === 'corporate' ? 'selected' : ''}>Công ty</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Trạng thái</label>
+              <select name="status">
+                <option value="active" ${!customer || customer.status === 'active' ? 'selected' : ''}>Hoạt động</option>
+                <option value="inactive" ${customer && customer.status === 'inactive' ? 'selected' : ''}>Ngưng</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
               <label>Người liên hệ</label>
               <input type="text" name="contact_person" value="${customer ? (customer.contact_person || '') : ''}">
             </div>
@@ -1928,25 +2171,14 @@ async function saveCustomer(event, customerId) {
   event.preventDefault();
   const formData = new FormData(event.target);
   const data = formDataToObject(formData);
-  
-  console.log('🔍 FormData keys:', Array.from(formData.keys()));
-  console.log('🔍 FormData entries:');
-  for (let [key, value] of formData.entries()) {
-    console.log(`  ${key}: "${value}" (${typeof value}, length: ${value.length})`);
-  }
-  console.log('🔍 Converted object:', data);
-  
+
   // Validate trước khi gửi
   if (!data.name || !data.name.trim()) {
-    console.error('❌ Validation failed: empty name');
     alert('Vui lòng nhập tên công ty');
     return;
   }
-  
-  console.log('✅ Validation passed, sending to server...');
-  
+
   try {
-    console.log('📤 Saving customer:', data);
     if (customerId) {
       await apiCall(`/customers/${customerId}`, {
         method: 'PUT',
@@ -1959,11 +2191,17 @@ async function saveCustomer(event, customerId) {
       });
     }
     
-    console.log('✅ Save successful');
     closeModal();
-    loadPage('customers');
+
+    // If another module (e.g. CRM) set a post-save hook, use it.
+    const afterSave = window.onCustomerSaved;
+    window.onCustomerSaved = null;
+    if (typeof afterSave === 'function') {
+      await afterSave();
+    } else {
+      loadPage('customers');
+    }
   } catch (error) {
-    console.error('❌ Customer save error:', error);
     alert('Lỗi: ' + error.message);
   }
 }
@@ -2398,6 +2636,11 @@ function showVehicleModal(vehicleId = null) {
   `;
   
   document.getElementById('modalContainer').innerHTML = modal;
+}
+
+function updateVehicleModel(_brand) {
+  // Intentionally minimal: keeps inline onchange handler from crashing.
+  // Model is currently a free-text field.
 }
 
 async function saveVehicle(event, vehicleId) {
