@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phần mềm quản lý vận chuyển</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>🚚 VẬN CHUYỂN</h2>
+        <div class="user-info">
+          <span id="userName"></span>
+          <button onclick="logout()" class="btn-logout">Đăng xuất</button>
+        </div>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <a href="#dashboard" class="nav-item active" data-page="dashboard">
+          📊 Dashboard
+        </a>
+        <a href="#orders" class="nav-item" data-page="orders">
+          📦 Đơn hàng
+        </a>
+        <a href="#customers" class="nav-item" data-page="customers">
+          👥 Khách hàng
+        </a>
+        <a href="#drivers" class="nav-item" data-page="drivers">
+          🚗 Tài xế
+        </a>
+        <a href="#vehicles" class="nav-item" data-page="vehicles">
+          🚛 Xe đầu kéo
+        </a>
+        <a href="#containers" class="nav-item" data-page="containers">
+          📦 Container
+        </a>
+        <a href="#routes" class="nav-item" data-page="routes">
+          🗺️ Tuyến đường
+        </a>
+        <a href="#reports" class="nav-item" data-page="reports">
+          📈 Báo cáo
+        </a>
+        <a href="#accounting" class="nav-item" data-page="accounting">
+          💰 Kế toán & Thuế
+        </a>
+        <a href="#salaries" class="nav-item" data-page="salaries" id="menuSalaries">
+          💵 Lương tài xế
+        </a>
+        <a href="#maintenance" class="nav-item" data-page="maintenance" id="menuMaintenance">
+          🔧 Bảo dưỡng xe
+        </a>
+        <a href="#fuel" class="nav-item" data-page="fuel" id="menuFuel">
+          ⛽ Nhiên liệu
+        </a>
+        <a href="#cashflow" class="nav-item" data-page="cashflow" id="menuCashFlow">
+          💰 Dòng tiền
+        </a>
+        <a href="#expense-reports" class="nav-item" data-page="expense-reports" id="menuExpenseReports">
+          📊 Báo cáo chi phí
+        </a>
+        <a href="#crm" class="nav-item" data-page="crm" id="menuCRM">
+          👔 CRM & Báo giá
+        </a>
+        <a href="#users" class="nav-item" data-page="users" id="menuUsers">
+          👤 Quản lý User
+        </a>
+        <a href="#audit-logs" class="nav-item" data-page="audit-logs" id="menuAuditLogs">
+          📋 Nhật ký hoạt động
+        </a>
+      </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div id="pageContent"></div>
+    </main>
+  </div>
+
+  <!-- Modal Container -->
+  <div id="modalContainer"></div>
+
+  <script src="js/app.js"></script>
+  <script src="js/phase1-features.js"></script>
+  <script src="js/phase2-features.js"></script>
+  <script src="js/phase3-features.js"></script>
+</body>
+</html>

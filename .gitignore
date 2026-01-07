@@ -1,0 +1,4 @@
+# freight.db sẽ được tạo tự động khi chạy server lần đầu
+node_modules/
+*.log
+.env
