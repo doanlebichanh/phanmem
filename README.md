@@ -454,6 +454,11 @@ Bạn có thể override đường dẫn bằng biến môi trường:
 
 Khuyến nghị: đóng app trước khi backup.
 
+Ghi chú (bản Desktop): trong app có nút **Backup/Restore** và có thể bật **tự động backup**.
+- Tự động backup chỉ chạy khi ứng dụng đang mở.
+- Chỉ tạo backup khi DB có thay đổi so với lần backup trước.
+- Cơ chế giữ bản: luôn giữ **5** bản gần nhất + giữ thêm **12** bản theo tháng (12 tháng gần nhất).
+
 Script có sẵn: `tools/backup-freight-db.ps1`
 
 Ví dụ backup từ ổ C sang ổ D (tạo thư mục backup theo timestamp):

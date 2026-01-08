@@ -67,6 +67,120 @@ function logout() {
   window.location.href = 'login.html';
 }
 
+// ==================== BACKUP / RESTORE (DESKTOP APP) ====================
+function isDesktopApp() {
+  return !!(window.electronAPI && typeof window.electronAPI.backupDatabase === 'function');
+}
+
+window.backupDatabase = async function() {
+  try {
+    if (!isDesktopApp()) {
+      alert('Chức năng Backup chỉ dùng trên bản Desktop (Electron).');
+      return;
+    }
+
+    const result = await window.electronAPI.backupDatabase({});
+    alert(`✅ Đã backup dữ liệu\n\nDB: ${result.dbPath}\nBackup: ${result.backupDir}`);
+  } catch (error) {
+    alert('Lỗi backup: ' + error.message);
+  }
+};
+
+window.restoreDatabase = async function() {
+  try {
+    if (!isDesktopApp()) {
+      alert('Chức năng Phục hồi chỉ dùng trên bản Desktop (Electron).');
+      return;
+    }
+
+    const ok = confirm('⚠️ Phục hồi sẽ ghi đè dữ liệu hiện tại và ứng dụng sẽ tự khởi động lại.\n\nBạn chắc chắn muốn tiếp tục?');
+    if (!ok) return;
+
+    await window.electronAPI.restoreDatabase({});
+  } catch (error) {
+    alert('Lỗi phục hồi: ' + error.message);
+  }
+};
+
+window.openAutoBackupSettings = async function() {
+  try {
+    if (!isDesktopApp()) {
+      alert('Tự động backup chỉ dùng trên bản Desktop (Electron).');
+      return;
+    }
+
+    const cfg = await window.electronAPI.getBackupConfig();
+    const modal = `
+      <div class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 640px;">
+          <div class="modal-header">
+            <h2>🕒 Cấu hình tự động backup</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <form id="autoBackupForm" class="modal-body" onsubmit="saveAutoBackupSettings(event)">
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="autoBackupEnabled" ${cfg.enabled ? 'checked' : ''}>
+                Bật tự động backup
+              </label>
+            </div>
+            <div class="form-group">
+              <label>Mỗi (giờ)</label>
+              <input type="number" id="autoBackupInterval" min="1" max="168" value="${cfg.intervalHours || 24}" required>
+              <small style="color: var(--secondary);">Gợi ý: 24 = mỗi ngày, 168 = mỗi tuần (chạy khi ứng dụng đang mở).</small>
+            </div>
+            <div class="form-group">
+              <label>Thư mục lưu backup</label>
+              <div style="display:flex; gap:10px;">
+                <input type="text" id="autoBackupDestDir" value="${(cfg.destDir || '').replace(/"/g, '&quot;')}" readonly style="flex:1;">
+                <button type="button" class="btn btn-secondary" onclick="pickAutoBackupDir()">Chọn…</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Lần backup gần nhất</label>
+              <div>${cfg.lastBackupAt ? formatDate(cfg.lastBackupAt) : '-'}</div>
+            </div>
+          </form>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
+            <button class="btn btn-success" type="button" onclick="backupDatabase()">Backup ngay</button>
+            <button class="btn btn-primary" type="submit" form="autoBackupForm">Lưu</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('modalContainer').innerHTML = modal;
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
+
+window.pickAutoBackupDir = async function() {
+  try {
+    const dir = await window.electronAPI.selectDirectory();
+    if (!dir) return;
+    const input = document.getElementById('autoBackupDestDir');
+    if (input) input.value = dir;
+  } catch (error) {
+    alert('Lỗi chọn thư mục: ' + error.message);
+  }
+};
+
+window.saveAutoBackupSettings = async function(event) {
+  event.preventDefault();
+  try {
+    const enabled = !!document.getElementById('autoBackupEnabled')?.checked;
+    const intervalHours = parseInt(document.getElementById('autoBackupInterval')?.value || '24', 10);
+    const destDir = document.getElementById('autoBackupDestDir')?.value || '';
+
+    await window.electronAPI.setBackupConfig({ enabled, intervalHours, destDir });
+    alert('✅ Đã lưu cấu hình tự động backup');
+    closeModal();
+  } catch (error) {
+    alert('Lỗi lưu cấu hình: ' + error.message);
+  }
+};
+
 // ==================== API HELPER ====================
 async function apiCall(endpoint, options = {}) {
   const config = {

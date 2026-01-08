@@ -15,7 +15,7 @@
   --light: #f8fafc;
   --dark: #1e293b;
   --border: #e2e8f0;
-  --sidebar-width: 250px;
+  --sidebar-width: 220px;
 }
 
 body {
@@ -99,29 +99,61 @@ body {
 }
 
 .sidebar-header {
-  padding: 20px;
+  padding: 14px 14px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.1);
 }
 
 .sidebar-header h2 {
-  font-size: 1.3rem;
-  margin-bottom: 10px;
+  font-size: 1.05rem;
+  margin-bottom: 8px;
+  text-align: center;
+  letter-spacing: 0.6px;
 }
 
 .user-info {
   font-size: 0.85rem;
   opacity: 0.8;
+  text-align: center;
 }
 
 .btn-logout {
   margin-top: 8px;
   font-size: 0.8rem;
-  padding: 4px 10px;
+  padding: 6px 10px;
   background: rgba(255,255,255,0.1);
   color: white;
   border: 1px solid rgba(255,255,255,0.2);
   border-radius: 4px;
   cursor: pointer;
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nav-item {
+  padding: 10px 14px;
+  font-size: 0.9rem;
+}
+
+.sidebar-footer {
+  padding: 10px 14px 14px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+.sidebar-footer-title {
+  font-size: 0.75rem;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.sidebar-footer-actions .btn-logout {
+  width: 100%;
+  margin-top: 6px;
 }
 
 .btn-logout:hover {

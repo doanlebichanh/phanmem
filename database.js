@@ -21,6 +21,24 @@ const dbPath = resolveDbPath();
 const db = new sqlite3.Database(dbPath);
 db.run('PRAGMA foreign_keys = ON');
 
+function checkpointWal(mode = 'FULL') {
+  return new Promise((resolve, reject) => {
+    db.run(`PRAGMA wal_checkpoint(${mode})`, (err) => {
+      if (err) reject(err);
+      else resolve(true);
+    });
+  });
+}
+
+function closeDb() {
+  return new Promise((resolve, reject) => {
+    db.close((err) => {
+      if (err) reject(err);
+      else resolve(true);
+    });
+  });
+}
+
 function dbRun(query, params = []) {
   return new Promise((resolve, reject) => {
     db.run(query, params, function(err) {
@@ -465,6 +483,7 @@ function initDatabase() {
 
         // Ensure critical columns exist for older DBs
         await ensureColumn('users', 'status', "TEXT NOT NULL DEFAULT 'active'");
+        await ensureColumn('customers', 'name', 'TEXT');
         await ensureColumn('customers', 'contact_person', 'TEXT');
         await ensureColumn('customers', 'customer_type', "TEXT DEFAULT 'individual'");
         await ensureColumn('customers', 'credit_limit', 'REAL DEFAULT 0');
@@ -477,8 +496,18 @@ function initDatabase() {
 
         // Orders VAT/debt fields (for consistent VAT reporting)
         await ensureColumn('orders', 'subtotal_amount', 'REAL');
+        await ensureColumn('orders', 'final_amount', 'REAL');
         await ensureColumn('orders', 'vat_rate', 'REAL DEFAULT 0.1');
         await ensureColumn('orders', 'vat_amount', 'REAL');
+
+        // Best-effort backfill for legacy customer schema
+        if (await hasColumn('customers', 'customer_name')) {
+          await dbRun(`
+            UPDATE customers
+            SET name = COALESCE(NULLIF(name, ''), customer_name)
+            WHERE (name IS NULL OR name = '') AND customer_name IS NOT NULL
+          `);
+        }
 
         // Cash flow + operational tables for consolidated reports
         await ensureColumn('cash_flow', 'type', 'TEXT');
@@ -643,4 +672,4 @@ function initContainers(resolve, reject) {
   });
 }
 
-module.exports = { db, initDatabase };
+module.exports = { db, dbPath, initDatabase, checkpointWal, closeDb };
