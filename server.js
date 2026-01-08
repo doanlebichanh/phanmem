@@ -1170,7 +1170,7 @@ app.post('/api/orders/:orderId/costs', authenticateToken, requireRole('admin', '
   }
 });
 
-app.delete('/api/costs/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
+app.delete('/api/costs/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Get old cost data before deletion
     const oldCost = await dbGet('SELECT * FROM trip_costs WHERE id = ?', [req.params.id]);
@@ -1394,7 +1394,7 @@ app.post('/api/orders/:orderId/payments', authenticateToken, requireRole('admin'
   }
 });
 
-app.delete('/api/payments/:id', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+app.delete('/api/payments/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     // Lấy thông tin thanh toán trước khi xóa để hoàn trả công nợ
     const payment = await dbGet('SELECT * FROM payments WHERE id = ?', [req.params.id]);
@@ -3115,7 +3115,7 @@ app.put('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'dispat
 });
 
 // Delete fuel record
-app.delete('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+app.delete('/api/fuel-records/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const record = await dbGet('SELECT * FROM fuel_records WHERE id = ?', [req.params.id]);
     if (!record) {

@@ -36,6 +36,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const menuMaintenance = document.getElementById('menuMaintenance');
     if (menuMaintenance) menuMaintenance.style.display = 'none';
   }
+
+  // Data tools (Backup/Restore/Auto-backup): admin only
+  if (currentUser.role !== 'admin') {
+    const menuDataTools = document.getElementById('menuDataTools');
+    if (menuDataTools) menuDataTools.style.display = 'none';
+  }
   
   // Setup navigation
   setupNavigation();
@@ -72,10 +78,19 @@ function isDesktopApp() {
   return !!(window.electronAPI && typeof window.electronAPI.backupDatabase === 'function');
 }
 
+function isAdmin() {
+  return !!(currentUser && currentUser.role === 'admin');
+}
+
 window.backupDatabase = async function() {
   try {
     if (!isDesktopApp()) {
       alert('Chức năng Backup chỉ dùng trên bản Desktop (Electron).');
+      return;
+    }
+
+    if (!isAdmin()) {
+      alert('🔐 Chỉ Admin mới có quyền Backup dữ liệu.');
       return;
     }
 
@@ -93,6 +108,11 @@ window.restoreDatabase = async function() {
       return;
     }
 
+    if (!isAdmin()) {
+      alert('🔐 Chỉ Admin mới có quyền Phục hồi dữ liệu.');
+      return;
+    }
+
     const ok = confirm('⚠️ Phục hồi sẽ ghi đè dữ liệu hiện tại và ứng dụng sẽ tự khởi động lại.\n\nBạn chắc chắn muốn tiếp tục?');
     if (!ok) return;
 
@@ -106,6 +126,11 @@ window.openAutoBackupSettings = async function() {
   try {
     if (!isDesktopApp()) {
       alert('Tự động backup chỉ dùng trên bản Desktop (Electron).');
+      return;
+    }
+
+    if (!isAdmin()) {
+      alert('🔐 Chỉ Admin mới có quyền cấu hình tự động backup.');
       return;
     }
 
@@ -1284,7 +1309,7 @@ async function viewOrderDetail(orderId) {
                       <td>${cost.cost_date ? formatDate(cost.cost_date) : '-'}</td>
                       <td>${cost.receipt_number || '-'}</td>
                       <td>
-                        <button class="btn btn-sm btn-danger" onclick="deleteCost(${cost.id})">Xóa</button>
+                        ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteCost(${cost.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
                   `).join('')}
@@ -1323,7 +1348,7 @@ async function viewOrderDetail(orderId) {
                       <td>${adv.notes || '-'}</td>
                       <td>
                         ${!adv.settled ? `<button class="btn btn-sm btn-success" onclick="settleAdvance(${adv.id})">Quyết toán</button>` : ''}
-                        <button class="btn btn-sm btn-danger" onclick="deleteAdvance(${adv.id})">Xóa</button>
+                        ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteAdvance(${adv.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
                   `).join('')}
@@ -1363,7 +1388,7 @@ async function viewOrderDetail(orderId) {
                       <td>${payment.reference_number || '-'}</td>
                       <td>${payment.notes || '-'}</td>
                       <td>
-                        ${['admin', 'accountant'].includes(currentUser.role) ? `<button class="btn btn-sm btn-danger" onclick="deletePayment(${payment.id})">Xóa</button>` : ''}
+                        ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deletePayment(${payment.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
                   `).join('')}
@@ -1400,7 +1425,7 @@ async function viewOrderDetail(orderId) {
                       <td>${formatDate(doc.uploaded_at)}</td>
                       <td>
                         <button class="btn btn-sm btn-primary" onclick="viewDocument(${doc.id})">Xem</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteDocument(${doc.id})">Xóa</button>
+                        ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteDocument(${doc.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
                   `).join('')}
@@ -3326,7 +3351,7 @@ async function renderRoutes(container) {
                         <button class="btn btn-sm btn-success" onclick="exportRouteDetailExcel(${r.id}, '${(r.route_name || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
                         <button class="btn btn-sm btn-secondary" onclick="printRouteDetail(${r.id})" title="In/PDF">🖨️</button>
                         <button class="btn btn-sm btn-primary" onclick="showRouteModal(${r.id})">Sửa</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteRoute(${r.id})">Xóa</button>
+                        ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteRoute(${r.id})">Xóa</button>` : ''}
                       </td>
                     </tr>
                   `).join('')}
@@ -5122,7 +5147,7 @@ async function renderUsers(container) {
                       <button class="btn btn-sm btn-secondary" onclick="printUserDetail(${user.id})" title="In/PDF">🖨️</button>
                       <button class="btn btn-sm btn-primary" onclick="showUserModal(${user.id})">Sửa</button>
                       <button class="btn btn-sm btn-warning" onclick="showChangePasswordModal(${user.id})">Đổi MK</button>
-                      <button class="btn btn-sm btn-danger" onclick="deleteUser(${user.id})">Xóa</button>
+                      ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteUser(${user.id})">Xóa</button>` : ''}
                     </td>
                   </tr>
                 `).join('')}

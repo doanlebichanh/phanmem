@@ -157,7 +157,7 @@ async function loadFuelRecords() {
               <td>${r.station_name || '-'}</td>
               <td class="actions">
                 <button class="btn btn-sm btn-info" onclick="editFuelRecord(${r.id})" title="Sửa">✏️</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteFuelRecord(${r.id})" title="Xóa">🗑️</button>
+                ${currentUser && currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteFuelRecord(${r.id})" title="Xóa">🗑️</button>` : ''}
               </td>
             </tr>
           `).join('')}
