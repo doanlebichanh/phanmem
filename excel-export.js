@@ -44,6 +44,176 @@ const totalStyle = {
   }
 };
 
+function applyThinBorderToCell(cell) {
+  cell.border = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' }
+  };
+}
+
+function normalizeMetaLines(metaLines) {
+  if (!metaLines) return [];
+  if (Array.isArray(metaLines)) return metaLines.filter(Boolean);
+  return [String(metaLines)];
+}
+
+function setColumns(worksheet, columns = []) {
+  worksheet.columns = columns.map(col => ({
+    header: col.header,
+    key: col.key,
+    width: col.width || 15
+  }));
+}
+
+function writeHeaderRow(worksheet, rowIndex, columns) {
+  const row = worksheet.getRow(rowIndex);
+  row.height = 22;
+  columns.forEach((col, i) => {
+    const cell = worksheet.getCell(rowIndex, i + 1);
+    cell.value = col.header;
+    cell.style = headerStyle;
+  });
+}
+
+function writeDataRows(worksheet, startRowIndex, columns, rows) {
+  let rowIndex = startRowIndex;
+  (rows || []).forEach((rowData, idx) => {
+    const excelRowIndex = rowIndex + idx;
+    columns.forEach((col, i) => {
+      const cell = worksheet.getCell(excelRowIndex, i + 1);
+      let value = rowData ? rowData[col.key] : '';
+      if (col.value) {
+        value = col.value(rowData, idx);
+      }
+      cell.value = value === undefined ? '' : value;
+      if (col.numFmt) cell.numFmt = col.numFmt;
+      if (col.alignment) cell.alignment = col.alignment;
+      applyThinBorderToCell(cell);
+    });
+  });
+  return rowIndex + (rows || []).length;
+}
+
+function autoFreezePanes(worksheet, headerRowIndex) {
+  worksheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
+}
+
+async function exportTableWorkbook({
+  sheetName,
+  title,
+  metaLines,
+  columns,
+  rows,
+  pageSetup
+}) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(sheetName || 'Export');
+  worksheet.properties.defaultRowHeight = 18;
+  worksheet.views = [{ showGridLines: false }];
+  if (pageSetup) worksheet.pageSetup = { ...worksheet.pageSetup, ...pageSetup };
+
+  const cols = columns || [];
+  setColumns(worksheet, cols);
+
+  const totalCols = Math.max(cols.length, 1);
+
+  // Title
+  worksheet.mergeCells(1, 1, 1, totalCols);
+  worksheet.getCell(1, 1).value = title || 'BÁO CÁO';
+  worksheet.getCell(1, 1).style = titleStyle;
+  worksheet.getRow(1).height = 28;
+
+  // Meta lines
+  let rowNum = 2;
+  const metas = normalizeMetaLines(metaLines);
+  metas.forEach(line => {
+    worksheet.mergeCells(rowNum, 1, rowNum, totalCols);
+    worksheet.getCell(rowNum, 1).value = line;
+    worksheet.getCell(rowNum, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+    rowNum++;
+  });
+  worksheet.mergeCells(rowNum, 1, rowNum, totalCols);
+  worksheet.getCell(rowNum, 1).value = `Ngày xuất: ${formatDate(new Date())}`;
+  worksheet.getCell(rowNum, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+  rowNum += 2;
+
+  // Header + rows
+  const headerRowIndex = rowNum;
+  writeHeaderRow(worksheet, headerRowIndex, cols);
+  const afterDataRow = writeDataRows(worksheet, headerRowIndex + 1, cols, rows);
+
+  // Auto-filter
+  if (cols.length > 0) {
+    worksheet.autoFilter = {
+      from: { row: headerRowIndex, column: 1 },
+      to: { row: headerRowIndex, column: cols.length }
+    };
+  }
+
+  autoFreezePanes(worksheet, headerRowIndex);
+
+  // Add a bit of bottom padding
+  worksheet.getRow(afterDataRow + 1).height = 8;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return buffer;
+}
+
+async function exportMultiSheetWorkbook({
+  title,
+  metaLines,
+  sheets
+}) {
+  const workbook = new ExcelJS.Workbook();
+  const metas = normalizeMetaLines(metaLines);
+
+  (sheets || []).forEach((sheet, sheetIndex) => {
+    const worksheet = workbook.addWorksheet(sheet.name || `Sheet${sheetIndex + 1}`);
+    worksheet.properties.defaultRowHeight = 18;
+    worksheet.views = [{ showGridLines: false }];
+    if (sheet.pageSetup) worksheet.pageSetup = { ...worksheet.pageSetup, ...sheet.pageSetup };
+
+    const cols = sheet.columns || [];
+    setColumns(worksheet, cols);
+    const totalCols = Math.max(cols.length, 1);
+
+    worksheet.mergeCells(1, 1, 1, totalCols);
+    worksheet.getCell(1, 1).value = sheet.title || title || 'BÁO CÁO';
+    worksheet.getCell(1, 1).style = titleStyle;
+    worksheet.getRow(1).height = 28;
+
+    let rowNum = 2;
+    metas.concat(normalizeMetaLines(sheet.metaLines)).forEach(line => {
+      worksheet.mergeCells(rowNum, 1, rowNum, totalCols);
+      worksheet.getCell(rowNum, 1).value = line;
+      worksheet.getCell(rowNum, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+      rowNum++;
+    });
+    worksheet.mergeCells(rowNum, 1, rowNum, totalCols);
+    worksheet.getCell(rowNum, 1).value = `Ngày xuất: ${formatDate(new Date())}`;
+    worksheet.getCell(rowNum, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+    rowNum += 2;
+
+    const headerRowIndex = rowNum;
+    writeHeaderRow(worksheet, headerRowIndex, cols);
+    const afterDataRow = writeDataRows(worksheet, headerRowIndex + 1, cols, sheet.rows || []);
+
+    if (cols.length > 0) {
+      worksheet.autoFilter = {
+        from: { row: headerRowIndex, column: 1 },
+        to: { row: headerRowIndex, column: cols.length }
+      };
+    }
+    autoFreezePanes(worksheet, headerRowIndex);
+    worksheet.getRow(afterDataRow + 1).height = 8;
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return buffer;
+}
+
 // Export báo cáo nhiên liệu
 async function exportFuelReport(db, filters = {}) {
   const workbook = new ExcelJS.Workbook();
@@ -863,5 +1033,7 @@ module.exports = {
   exportCashFlowReport,
   exportCashFlowConsolidatedReport,
   exportExpenseReport,
-  exportQuoteReport
+  exportQuoteReport,
+  exportTableWorkbook,
+  exportMultiSheetWorkbook
 };

@@ -29,6 +29,9 @@ window.renderSalaries = async function renderSalaries(container) {
         <button class="btn btn-success" onclick="exportSalariesExcel()">
           📊 Export Excel
         </button>
+        <button class="btn btn-secondary" onclick="printSalariesList()">
+          🖨️ In/PDF
+        </button>
       </div>
     </div>
 
@@ -637,7 +640,8 @@ window.viewSalaryDetail = async function(salaryId) {
             ${salary.status === 'draft' ? `
               <button class="btn btn-warning" onclick="recalculateSalary(${salaryId})">🔄 Tính lại</button>
             ` : ''}
-            <button class="btn btn-primary" onclick="exportSalaryDetailPDF(${salaryId})">📄 Export PDF</button>
+            <button class="btn btn-success" onclick="exportSalaryDetailExcel(${salaryId})">📊 Xuất Excel</button>
+            <button class="btn btn-primary" onclick="exportSalaryDetailPDF(${salaryId})">🖨️ In/PDF</button>
           </div>
         </div>
       </div>
@@ -652,119 +656,29 @@ window.viewSalaryDetail = async function(salaryId) {
 // ===== EXPORT EXCEL =====
 
 window.exportSalariesExcel = async function() {
-  try {
-    const month = document.getElementById('filterSalaryMonth')?.value;
-    const driver_id = document.getElementById('filterSalaryDriver')?.value;
-    
-    let url = '/salaries?';
-    if (month) url += `month=${month}&`;
-    if (driver_id) url += `driver_id=${driver_id}&`;
-    
-    const salaries = await apiCall(url);
-    
-    if (!salaries || salaries.length === 0) {
-      alert('Không có dữ liệu để export');
-      return;
-    }
-    
-    // Create Excel-compatible HTML table
-    let html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-      <head>
-        <meta charset="utf-8">
-        <style>
-          table { border-collapse: collapse; width: 100%; }
-          th, td { border: 1px solid black; padding: 8px; text-align: left; }
-          th { background-color: #667eea; color: white; font-weight: bold; }
-          .number { text-align: right; }
-        </style>
-      </head>
-      <body>
-        <h2>BẢNG LƯƠNG TÀI XẾ ${month ? `- THÁNG ${month}` : ''}</h2>
-        <p>Ngày xuất: ${formatDate(new Date().toISOString())}</p>
-        <table>
-          <thead>
-            <tr>
-              <th>STT</th>
-              <th>Tháng</th>
-              <th>Tài xế</th>
-              <th>Lương cơ bản (VNĐ)</th>
-              <th>Số chuyến</th>
-              <th>Thưởng (VNĐ)</th>
-              <th>Phạt (VNĐ)</th>
-              <th>Tạm ứng trừ (VNĐ)</th>
-              <th>Tổng lương (VNĐ)</th>
-              <th>Trạng thái</th>
-            </tr>
-          </thead>
-          <tbody>
-    `;
-    
-    let totalBaseSalary = 0;
-    let totalBonus = 0;
-    let totalPenalty = 0;
-    let totalAdvance = 0;
-    let totalSalary = 0;
-    
-    salaries.forEach((s, index) => {
-      totalBaseSalary += s.base_salary || 0;
-      totalBonus += s.trip_bonus || 0;
-      totalPenalty += s.deductions || 0;
-      totalAdvance += s.advances_deducted || 0;
-      totalSalary += s.total_salary || 0;
-      
-      html += `
-        <tr>
-          <td>${index + 1}</td>
-          <td>${s.salary_month}</td>
-          <td>${s.driver_name}</td>
-          <td class="number">${(s.base_salary || 0).toLocaleString('vi-VN')}</td>
-          <td class="number">${s.trip_count}</td>
-          <td class="number">${(s.trip_bonus || 0).toLocaleString('vi-VN')}</td>
-          <td class="number">${(s.deductions || 0).toLocaleString('vi-VN')}</td>
-          <td class="number">${(s.advances_deducted || 0).toLocaleString('vi-VN')}</td>
-          <td class="number"><strong>${(s.total_salary || 0).toLocaleString('vi-VN')}</strong></td>
-          <td>${s.status === 'draft' ? 'Nháp' : s.status === 'approved' ? 'Đã duyệt' : 'Đã trả'}</td>
-        </tr>
-      `;
-    });
-    
-    html += `
-            <tr style="background-color: #f0f0f0; font-weight: bold;">
-              <td colspan="3">TỔNG CỘNG</td>
-              <td class="number">${totalBaseSalary.toLocaleString('vi-VN')}</td>
-              <td></td>
-              <td class="number">${totalBonus.toLocaleString('vi-VN')}</td>
-              <td class="number">${totalPenalty.toLocaleString('vi-VN')}</td>
-              <td class="number">${totalAdvance.toLocaleString('vi-VN')}</td>
-              <td class="number">${totalSalary.toLocaleString('vi-VN')}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
-    
-    // Create blob and download
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `Luong_TaiXe_${month || 'TatCa'}_${new Date().getTime()}.xls`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(downloadUrl);
-    
-    alert('✅ Đã export file Excel thành công!');
-  } catch (error) {
-    alert('Lỗi export: ' + error.message);
-  }
+  const month = document.getElementById('filterSalaryMonth')?.value || '';
+  const driver_id = document.getElementById('filterSalaryDriver')?.value || '';
+
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  if (driver_id) params.set('driver_id', driver_id);
+
+  const qs = params.toString();
+  downloadExcel(`/export/salaries${qs ? `?${qs}` : ''}`, `Luong_TaiXe_${month || 'TatCa'}_${Date.now()}.xlsx`);
 };
 
-window.exportSalaryDetailPDF = function(salaryId) {
-  alert('Chức năng export PDF đang được phát triển. Hiện tại bạn có thể dùng Ctrl+P để in hoặc lưu PDF.');
+window.exportSalaryDetailExcel = function(salaryId) {
+  downloadExcel(`/export/salaries/${salaryId}/excel`, `Luong_ChiTiet_${salaryId}_${Date.now()}.xlsx`);
+};
+
+window.exportSalaryDetailPDF = function(_salaryId) {
+  const modalBody = document.querySelector('.modal .modal-body');
+  printElement({ title: 'Chi tiết lương', element: modalBody, orientation: 'portrait' });
+};
+
+window.printSalariesList = function() {
+  const table = document.getElementById('salaries-content');
+  printElement({ title: 'Bảng lương tài xế', element: table, orientation: 'landscape' });
 };
 
 // ===== RECALCULATE SALARY =====
@@ -827,6 +741,10 @@ async function loadBonusesPenalties() {
     }
 
     content.innerHTML = `
+      <div class="no-print" style="margin-bottom: 12px; display:flex; gap:10px;">
+        <button class="btn btn-success" onclick="exportBonusesPenaltiesExcel()">📊 Xuất Excel</button>
+        <button class="btn btn-secondary" onclick="printBonusesPenaltiesList()">🖨️ In/PDF</button>
+      </div>
       <table class="data-table">
         <thead>
           <tr>
@@ -851,6 +769,8 @@ async function loadBonusesPenalties() {
               <td>${r.order_code || '-'}</td>
               <td>${r.approved_by_name || '-'}</td>
               <td class="actions">
+                <button class="btn btn-sm btn-success" onclick="exportBonusPenaltyDetailExcel(${r.id})" title="Xuất Excel">📊</button>
+                <button class="btn btn-sm btn-secondary" onclick="printBonusPenaltyDetail(${r.id})" title="In/PDF">🖨️</button>
                 ${currentUser.role === 'admin' ? `
                   <button class="btn btn-sm btn-danger" onclick="deleteBonusPenalty(${r.id})">Xóa</button>
                 ` : ''}
@@ -864,6 +784,45 @@ async function loadBonusesPenalties() {
     console.error('Error:', error);
   }
 }
+
+// ===== EXPORT / PRINT: BONUSES & PENALTIES =====
+window.exportBonusesPenaltiesExcel = function() {
+  const month = document.getElementById('filterSalaryMonth')?.value || '';
+  const driver_id = document.getElementById('filterSalaryDriver')?.value || '';
+
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  if (driver_id) params.set('driver_id', driver_id);
+
+  const qs = params.toString();
+  downloadExcel(`/export/bonuses-penalties${qs ? `?${qs}` : ''}`, `ThuongPhat_${month || 'TatCa'}_${Date.now()}.xlsx`);
+};
+
+window.exportBonusPenaltyDetailExcel = function(id) {
+  downloadExcel(`/export/bonuses-penalties/${id}/excel`, `ThuongPhat_${id}_${Date.now()}.xlsx`);
+};
+
+window.printBonusesPenaltiesList = function() {
+  const content = document.getElementById('bonuses-content');
+  printElement({ title: 'Danh sách thưởng/phạt', element: content, orientation: 'landscape' });
+};
+
+window.printBonusPenaltyDetail = async function(id) {
+  await printDetailFromApi({
+    title: `Chi tiết thưởng/phạt #${id}`,
+    endpoint: `/bonuses-penalties/${id}`,
+    fields: [
+      { label: 'Ngày', value: d => (d.date ? formatDate(d.date) : '-') },
+      { label: 'Tài xế', key: 'driver_name' },
+      { label: 'Loại', key: 'type' },
+      { label: 'Lý do', key: 'reason' },
+      { label: 'Số tiền', value: d => formatCurrency(d.amount || 0) },
+      { label: 'Đơn hàng', key: 'order_code' },
+      { label: 'Người duyệt', key: 'approved_by_name' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
 
 window.showBonusPenaltyModal = async function() {
   try {
@@ -1028,16 +987,26 @@ async function autoUpdateRelatedSalary(driver_id, date) {
 // ==================== PHASE 1: VEHICLE MAINTENANCE ====================
 
 window.renderMaintenance = async function renderMaintenance(container) {
+  const canEditMaintenance = currentUser && (currentUser.role === 'admin' || currentUser.role === 'dispatcher');
+  const canDeleteMaintenance = currentUser && currentUser.role === 'admin';
+  const canCreateVehicleFee = currentUser && (currentUser.role === 'admin' || currentUser.role === 'accountant');
+
   container.innerHTML = `
     <div class="page-header">
       <h1>🔧 Quản lý Bảo dưỡng Xe</h1>
       <div class="header-actions">
-        <button class="btn btn-primary" onclick="showMaintenanceModal()">
-          ➕ Thêm bảo dưỡng
-        </button>
-        <button class="btn btn-secondary" onclick="showVehicleFeeModal()">
-          💰 Thêm phí xe
-        </button>
+        <button class="btn btn-success" onclick="exportMaintenanceExcel()">📊 Xuất Excel</button>
+        <button class="btn btn-secondary" onclick="printMaintenanceList()">🖨️ In/PDF</button>
+        ${canEditMaintenance ? `
+          <button class="btn btn-primary" onclick="showMaintenanceModal()">
+            ➕ Thêm bảo dưỡng
+          </button>
+        ` : ''}
+        ${canCreateVehicleFee ? `
+          <button class="btn btn-secondary" onclick="showVehicleFeeModal()">
+            💰 Thêm phí xe
+          </button>
+        ` : ''}
       </div>
     </div>
 
@@ -1158,6 +1127,9 @@ async function loadMaintenance() {
       return;
     }
 
+    const canEditMaintenance = currentUser && (currentUser.role === 'admin' || currentUser.role === 'dispatcher');
+    const canDeleteMaintenance = currentUser && currentUser.role === 'admin';
+
     content.innerHTML = `
       <table class="data-table">
         <thead>
@@ -1184,10 +1156,10 @@ async function loadMaintenance() {
               <td>${r.next_due_date ? formatDate(r.next_due_date) : '-'}${r.next_due_odometer ? '<br>' + formatNumber(r.next_due_odometer) + ' km' : ''}</td>
               <td class="actions">
                 <button class="btn btn-sm btn-info" onclick="viewMaintenanceDetail(${r.id})">Xem</button>
-                <button class="btn btn-sm btn-primary" onclick="editMaintenance(${r.id})">Sửa</button>
-                ${currentUser.role === 'admin' ? `
-                  <button class="btn btn-sm btn-danger" onclick="deleteMaintenance(${r.id})">Xóa</button>
-                ` : ''}
+                <button class="btn btn-sm btn-success" onclick="exportMaintenanceDetailExcel(${r.id})" title="Xuất Excel">📊</button>
+                <button class="btn btn-sm btn-secondary" onclick="printMaintenanceDetail(${r.id})" title="In/PDF">🖨️</button>
+                ${canEditMaintenance ? `<button class="btn btn-sm btn-primary" onclick="editMaintenance(${r.id})">Sửa</button>` : ''}
+                ${canDeleteMaintenance ? `<button class="btn btn-sm btn-danger" onclick="deleteMaintenance(${r.id})">Xóa</button>` : ''}
               </td>
             </tr>
           `).join('')}
@@ -1199,6 +1171,48 @@ async function loadMaintenance() {
     alert('Lỗi tải bảo dưỡng: ' + error.message);
   }
 }
+
+// ===== EXPORT / PRINT: MAINTENANCE =====
+window.exportMaintenanceExcel = function() {
+  const vehicle_id = document.getElementById('filterMaintenanceVehicle')?.value || '';
+  const params = new URLSearchParams();
+  if (vehicle_id) params.set('vehicle_id', vehicle_id);
+  const qs = params.toString();
+  downloadExcel(`/export/maintenance${qs ? `?${qs}` : ''}`, `BaoDuong_${Date.now()}.xlsx`);
+};
+
+window.exportMaintenanceDetailExcel = function(id) {
+  downloadExcel(`/export/maintenance/${id}/excel`, `BaoDuong_${id}_${Date.now()}.xlsx`);
+};
+
+window.printMaintenanceList = function() {
+  const content = document.getElementById('maintenance-content');
+  printElement({ title: 'Lịch sử bảo dưỡng', element: content, orientation: 'landscape' });
+};
+
+window.printMaintenanceDetail = async function(id) {
+  await printDetailFromApi({
+    title: `Chi tiết bảo dưỡng #${id}`,
+    endpoint: `/maintenance/${id}`,
+    fields: [
+      { label: 'Xe', key: 'plate_number' },
+      { label: 'Loại', value: d => getMaintenanceTypeName(d.maintenance_type) },
+      { label: 'Ngày', value: d => (d.maintenance_date ? formatDate(d.maintenance_date) : '-') },
+      { label: 'Số km', value: d => (d.odometer_reading ? formatNumber(d.odometer_reading) + ' km' : '-') },
+      { label: 'Chi phí', value: d => formatCurrency(d.cost || 0) },
+      { label: 'Garage', key: 'garage' },
+      { label: 'Số hóa đơn', key: 'invoice_number' },
+      { label: 'Bảo dưỡng tiếp theo', value: d => {
+          const dd = d.next_due_date ? formatDate(d.next_due_date) : '-';
+          const km = d.next_due_odometer ? ` / ${formatNumber(d.next_due_odometer)} km` : '';
+          return dd + km;
+        }
+      },
+      { label: 'Mô tả', key: 'description' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
 
 function getMaintenanceTypeName(type) {
   const types = {
@@ -1363,6 +1377,7 @@ window.saveMaintenance = async function(event, maintenanceId) {
 window.viewMaintenanceDetail = async function(id) {
   try {
     const m = await apiCall(`/maintenance/${id}`);
+    const canEditMaintenance = currentUser && (currentUser.role === 'admin' || currentUser.role === 'dispatcher');
     const modal = `
       <div class="modal-overlay" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()" style="max-width: 720px;">
@@ -1398,7 +1413,9 @@ window.viewMaintenanceDetail = async function(id) {
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
-            <button class="btn btn-primary" onclick="closeModal(); editMaintenance(${id});">Sửa</button>
+            <button class="btn btn-success" onclick="exportMaintenanceDetailExcel(${id})">📊 Xuất Excel</button>
+            <button class="btn btn-primary" onclick="printMaintenanceDetail(${id})">🖨️ In/PDF</button>
+            ${canEditMaintenance ? `<button class="btn btn-primary" onclick="closeModal(); editMaintenance(${id});">Sửa</button>` : ''}
           </div>
         </div>
       </div>
@@ -1441,7 +1458,14 @@ async function loadVehicleFees() {
       return;
     }
 
+    const canEdit = currentUser && (currentUser.role === 'admin' || currentUser.role === 'accountant');
+    const canDelete = currentUser && currentUser.role === 'admin';
+
     content.innerHTML = `
+      <div class="no-print" style="margin-bottom: 12px; display:flex; gap:10px;">
+        <button class="btn btn-success" onclick="exportVehicleFeesExcel()">📊 Xuất Excel</button>
+        <button class="btn btn-secondary" onclick="printVehicleFeesList()">🖨️ In/PDF</button>
+      </div>
       <table class="data-table">
         <thead>
           <tr>
@@ -1452,6 +1476,7 @@ async function loadVehicleFees() {
             <th>Hiệu lực</th>
             <th>Hết hạn</th>
             <th>Số biên nhận</th>
+            <th>Thao tác</th>
           </tr>
         </thead>
         <tbody>
@@ -1464,6 +1489,13 @@ async function loadVehicleFees() {
               <td>${f.valid_from ? formatDate(f.valid_from) : '-'}</td>
               <td>${f.valid_to ? formatDate(f.valid_to) : '-'}</td>
               <td>${f.receipt_number || '-'}</td>
+              <td class="actions">
+                <button class="btn btn-sm btn-info" onclick="viewVehicleFeeDetail(${f.id})" title="Xem">👁️</button>
+                <button class="btn btn-sm btn-success" onclick="exportVehicleFeeDetailExcel(${f.id})" title="Xuất Excel">📊</button>
+                <button class="btn btn-sm btn-secondary" onclick="printVehicleFeeDetail(${f.id})" title="In/PDF">🖨️</button>
+                ${canEdit ? `<button class="btn btn-sm btn-primary" onclick="editVehicleFee(${f.id})" title="Sửa">✏️</button>` : ''}
+                ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="deleteVehicleFee(${f.id})" title="Xóa">🗑️</button>` : ''}
+              </td>
             </tr>
           `).join('')}
         </tbody>
@@ -1473,6 +1505,88 @@ async function loadVehicleFees() {
     console.error('Error:', error);
   }
 }
+
+// ===== EXPORT / PRINT: VEHICLE FEES =====
+window.exportVehicleFeesExcel = function() {
+  const vehicle_id = document.getElementById('filterMaintenanceVehicle')?.value || '';
+  const params = new URLSearchParams();
+  if (vehicle_id) params.set('vehicle_id', vehicle_id);
+  const qs = params.toString();
+  downloadExcel(`/export/vehicle-fees${qs ? `?${qs}` : ''}`, `PhiXe_${Date.now()}.xlsx`);
+};
+
+window.exportVehicleFeeDetailExcel = function(id) {
+  downloadExcel(`/export/vehicle-fees/${id}/excel`, `PhiXe_${id}_${Date.now()}.xlsx`);
+};
+
+window.printVehicleFeesList = function() {
+  const content = document.getElementById('fees-content');
+  printElement({ title: 'Danh sách phí xe', element: content, orientation: 'landscape' });
+};
+
+window.printVehicleFeeDetail = async function(id) {
+  await printDetailFromApi({
+    title: `Chi tiết phí xe #${id}`,
+    endpoint: `/vehicle-fees/${id}`,
+    fields: [
+      { label: 'Xe', key: 'plate_number' },
+      { label: 'Loại phí', value: d => getFeeTypeName(d.fee_type) },
+      { label: 'Số tiền', value: d => formatCurrency(d.amount || 0) },
+      { label: 'Ngày đóng', value: d => (d.paid_date ? formatDate(d.paid_date) : '-') },
+      { label: 'Hiệu lực', value: d => (d.valid_from ? formatDate(d.valid_from) : '-') },
+      { label: 'Hết hạn', value: d => (d.valid_to ? formatDate(d.valid_to) : '-') },
+      { label: 'Số biên nhận', key: 'receipt_number' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
+
+window.viewVehicleFeeDetail = async function(id) {
+  try {
+    const f = await apiCall(`/vehicle-fees/${id}`);
+    const canEdit = currentUser && (currentUser.role === 'admin' || currentUser.role === 'accountant');
+    const canDelete = currentUser && currentUser.role === 'admin';
+
+    const modal = `
+      <div class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 720px;">
+          <div class="modal-header">
+            <h2>🔍 Chi tiết phí xe</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-row">
+              <div>
+                <p><strong>Xe:</strong> ${f.plate_number || '-'}</p>
+                <p><strong>Loại phí:</strong> ${getFeeTypeName(f.fee_type)}</p>
+                <p><strong>Số tiền:</strong> ${formatCurrency(f.amount || 0)}</p>
+                <p><strong>Ngày đóng:</strong> ${f.paid_date ? formatDate(f.paid_date) : '-'}</p>
+              </div>
+              <div>
+                <p><strong>Hiệu lực:</strong> ${f.valid_from ? formatDate(f.valid_from) : '-'}</p>
+                <p><strong>Hết hạn:</strong> ${f.valid_to ? formatDate(f.valid_to) : '-'}</p>
+                <p><strong>Số biên nhận:</strong> ${f.receipt_number || '-'}</p>
+                <p><strong>Người tạo:</strong> ${f.created_by_name || '-'}</p>
+              </div>
+            </div>
+            ${f.notes ? `<div class="alert alert-info"><strong>Ghi chú:</strong><br>${f.notes}</div>` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
+            <button class="btn btn-success" onclick="exportVehicleFeeDetailExcel(${id})">📊 Xuất Excel</button>
+            <button class="btn btn-primary" onclick="printVehicleFeeDetail(${id})">🖨️ In/PDF</button>
+            ${canEdit ? `<button class="btn btn-primary" onclick="closeModal(); editVehicleFee(${id});">Sửa</button>` : ''}
+            ${canDelete ? `<button class="btn btn-danger" onclick="deleteVehicleFee(${id})">Xóa</button>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('modalContainer').innerHTML = modal;
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
 
 function getFeeTypeName(type) {
   const types = {
@@ -1485,61 +1599,66 @@ function getFeeTypeName(type) {
   return types[type] || type;
 }
 
-window.showVehicleFeeModal = async function() {
+window.showVehicleFeeModal = async function(feeId = null) {
   try {
     const vehicles = await apiCall('/vehicles');
+
+    let fee = null;
+    if (feeId) {
+      fee = await apiCall(`/vehicle-fees/${feeId}`);
+    }
 
     const modal = `
       <div class="modal-overlay" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()">
           <div class="modal-header">
-            <h2>💰 Thêm Phí Xe</h2>
+            <h2>💰 ${feeId ? 'Sửa' : 'Thêm'} Phí Xe</h2>
             <button class="modal-close" onclick="closeModal()">×</button>
           </div>
-          <form id="vehicleFeeForm" class="modal-body" onsubmit="saveVehicleFee(event)">
+          <form id="vehicleFeeForm" class="modal-body" onsubmit="saveVehicleFee(event, ${feeId || 'null'})">
             <div class="form-group">
               <label>🚛 Xe *</label>
-              <select id="feeVehicle" required>
+              <select id="feeVehicle" required ${feeId ? 'disabled' : ''}>
                 <option value="">-- Chọn xe --</option>
-                ${vehicles.map(v => `<option value="${v.id}">${v.plate_number}</option>`).join('')}
+                ${vehicles.map(v => `<option value="${v.id}" ${fee?.vehicle_id === v.id ? 'selected' : ''}>${v.plate_number}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
               <label>📋 Loại phí *</label>
               <select id="feeType" required>
                 <option value="">-- Chọn loại --</option>
-                <option value="registration">📜 Đăng kiểm</option>
-                <option value="inspection">🔍 Kiểm định</option>
-                <option value="insurance">🛡️ Bảo hiểm</option>
-                <option value="road_tax">🛣️ Thuế đường bộ</option>
-                <option value="other">📌 Khác</option>
+                <option value="registration" ${fee?.fee_type === 'registration' ? 'selected' : ''}>📜 Đăng kiểm</option>
+                <option value="inspection" ${fee?.fee_type === 'inspection' ? 'selected' : ''}>🔍 Kiểm định</option>
+                <option value="insurance" ${fee?.fee_type === 'insurance' ? 'selected' : ''}>🛡️ Bảo hiểm</option>
+                <option value="road_tax" ${fee?.fee_type === 'road_tax' ? 'selected' : ''}>🛣️ Thuế đường bộ</option>
+                <option value="other" ${fee?.fee_type === 'other' ? 'selected' : ''}>📌 Khác</option>
               </select>
             </div>
             <div class="form-group">
               <label>💵 Số tiền (VNĐ) *</label>
-              <input type="number" id="feeAmount" required placeholder="Nhập số tiền">
+              <input type="number" id="feeAmount" value="${fee?.amount ?? ''}" required placeholder="Nhập số tiền">
             </div>
             <div class="form-group">
               <label>📅 Ngày đóng *</label>
-              <input type="date" id="feePaidDate" value="${new Date().toISOString().substring(0, 10)}" required>
+              <input type="date" id="feePaidDate" value="${fee?.paid_date || new Date().toISOString().substring(0, 10)}" required>
             </div>
             <div class="form-row">
               <div class="form-group">
                 <label>📆 Hiệu lực từ</label>
-                <input type="date" id="feeValidFrom">
+                <input type="date" id="feeValidFrom" value="${fee?.valid_from || ''}">
               </div>
               <div class="form-group">
                 <label>📆 Hết hạn</label>
-                <input type="date" id="feeValidTo">
+                <input type="date" id="feeValidTo" value="${fee?.valid_to || ''}">
               </div>
             </div>
             <div class="form-group">
               <label>🧾 Số biên nhận</label>
-              <input type="text" id="feeReceipt" placeholder="Mã biên nhận">
+              <input type="text" id="feeReceipt" value="${fee?.receipt_number || ''}" placeholder="Mã biên nhận">
             </div>
             <div class="form-group">
               <label>📝 Ghi chú</label>
-              <textarea id="feeNotes" rows="3" placeholder="Ghi chú thêm (nếu có)"></textarea>
+              <textarea id="feeNotes" rows="3" placeholder="Ghi chú thêm (nếu có)">${fee?.notes || ''}</textarea>
             </div>
           </form>
           <div class="modal-footer">
@@ -1555,7 +1674,7 @@ window.showVehicleFeeModal = async function() {
   }
 }
 
-window.saveVehicleFee = async function(event) {
+window.saveVehicleFee = async function(event, feeId = null) {
   event.preventDefault();
   
   try {
@@ -1570,12 +1689,37 @@ window.saveVehicleFee = async function(event) {
       notes: document.getElementById('feeNotes').value
     };
 
-    await apiCall('/vehicle-fees', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    });
+    if (feeId) {
+      await apiCall(`/vehicle-fees/${feeId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      });
+    } else {
+      await apiCall('/vehicle-fees', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    }
 
     alert('Đã lưu thành công!');
+    closeModal();
+    await loadVehicleFees();
+    await loadMaintenanceAlerts();
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
+
+window.editVehicleFee = function(id) {
+  showVehicleFeeModal(id);
+};
+
+window.deleteVehicleFee = async function(id) {
+  if (!confirm('Xóa phí xe này?')) return;
+
+  try {
+    await apiCall(`/vehicle-fees/${id}`, { method: 'DELETE' });
+    alert('Đã xóa!');
     closeModal();
     await loadVehicleFees();
     await loadMaintenanceAlerts();

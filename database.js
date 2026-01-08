@@ -1,7 +1,23 @@
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const path = require('path');
-const dbPath = path.join(__dirname, 'freight.db');
+
+function resolveDbPath() {
+  // Highest priority: explicit file path
+  if (process.env.FREIGHT_DB_PATH && String(process.env.FREIGHT_DB_PATH).trim()) {
+    return path.resolve(String(process.env.FREIGHT_DB_PATH).trim());
+  }
+
+  // Next: directory to store freight.db
+  if (process.env.FREIGHT_DB_DIR && String(process.env.FREIGHT_DB_DIR).trim()) {
+    return path.join(path.resolve(String(process.env.FREIGHT_DB_DIR).trim()), 'freight.db');
+  }
+
+  // Dev default: keep next to source
+  return path.join(__dirname, 'freight.db');
+}
+
+const dbPath = resolveDbPath();
 const db = new sqlite3.Database(dbPath);
 db.run('PRAGMA foreign_keys = ON');
 

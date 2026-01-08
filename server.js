@@ -161,6 +161,29 @@ app.get('/api/users', authenticateToken, async (req, res) => {
   }
 });
 
+// Get single user (admin only)
+app.get('/api/users/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ admin mới có quyền xem user' });
+    }
+
+    const user = await dbGet(
+      `SELECT id, username, fullname, role, status, created_at FROM users WHERE id = ?`,
+      [req.params.id]
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Lỗi lấy thông tin user' });
+  }
+});
+
 // Create new user (admin only)
 app.post('/api/users', authenticateToken, async (req, res) => {
   try {
@@ -1953,6 +1976,34 @@ app.get('/api/audit-logs', authenticateToken, requireRole('admin'), async (req, 
   }
 });
 
+// Get single audit log (admin only)
+app.get('/api/audit-logs/:id', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const log = await dbGet(
+      `
+      SELECT 
+        al.*,
+        u.username,
+        u.fullname,
+        u.role
+      FROM audit_logs al
+      LEFT JOIN users u ON al.user_id = u.id
+      WHERE al.id = ?
+      `,
+      [req.params.id]
+    );
+
+    if (!log) {
+      return res.status(404).json({ error: 'Không tìm thấy nhật ký' });
+    }
+
+    res.json(log);
+  } catch (error) {
+    console.error('Error fetching audit log:', error);
+    res.status(500).json({ error: 'Lỗi lấy chi tiết nhật ký' });
+  }
+});
+
 // ====================
 // PHASE 1: SALARY MANAGEMENT APIs
 // ====================
@@ -2337,6 +2388,36 @@ app.get('/api/bonuses-penalties', authenticateToken, async (req, res) => {
   }
 });
 
+// Get single bonus/penalty
+app.get('/api/bonuses-penalties/:id', authenticateToken, async (req, res) => {
+  try {
+    const record = await dbGet(
+      `
+      SELECT 
+        bp.*,
+        d.name as driver_name,
+        o.order_code,
+        u.fullname as approved_by_name
+      FROM driver_bonuses_penalties bp
+      LEFT JOIN drivers d ON bp.driver_id = d.id
+      LEFT JOIN orders o ON bp.order_id = o.id
+      LEFT JOIN users u ON bp.approved_by = u.id
+      WHERE bp.id = ?
+      `,
+      [req.params.id]
+    );
+
+    if (!record) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+
+    res.json(record);
+  } catch (error) {
+    console.error('Error fetching bonus/penalty:', error);
+    res.status(500).json({ error: 'Lỗi lấy chi tiết thưởng/phạt' });
+  }
+});
+
 // Create bonus/penalty
 app.post('/api/bonuses-penalties', authenticateToken, requireRole('admin', 'accountant', 'dispatcher'), async (req, res) => {
   try {
@@ -2617,6 +2698,34 @@ app.get('/api/vehicle-fees', authenticateToken, async (req, res) => {
   }
 });
 
+// Get single vehicle fee
+app.get('/api/vehicle-fees/:id', authenticateToken, async (req, res) => {
+  try {
+    const fee = await dbGet(
+      `
+      SELECT 
+        f.*,
+        v.plate_number,
+        u.fullname as created_by_name
+      FROM vehicle_fees f
+      LEFT JOIN vehicles v ON f.vehicle_id = v.id
+      LEFT JOIN users u ON f.created_by = u.id
+      WHERE f.id = ?
+      `,
+      [req.params.id]
+    );
+
+    if (!fee) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+
+    res.json(fee);
+  } catch (error) {
+    console.error('Error fetching fee:', error);
+    res.status(500).json({ error: 'Lỗi lấy chi tiết phí xe' });
+  }
+});
+
 // Create vehicle fee
 app.post('/api/vehicle-fees', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
   try {
@@ -2652,6 +2761,110 @@ app.post('/api/vehicle-fees', authenticateToken, requireRole('admin', 'accountan
   } catch (error) {
     console.error('Error creating fee:', error);
     res.status(500).json({ error: 'Lỗi tạo phí' });
+  }
+});
+
+// Update vehicle fee
+app.put('/api/vehicle-fees/:id', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+  try {
+    const { fee_type, amount, paid_date, valid_from, valid_to, receipt_number, notes } = req.body;
+
+    const oldRecord = await dbGet('SELECT * FROM vehicle_fees WHERE id = ?', [req.params.id]);
+    if (!oldRecord) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+
+    await dbRun(
+      `
+        UPDATE vehicle_fees
+        SET fee_type = ?,
+            amount = ?,
+            paid_date = ?,
+            valid_from = ?,
+            valid_to = ?,
+            receipt_number = ?,
+            notes = ?
+        WHERE id = ?
+      `,
+      [fee_type, amount, paid_date, valid_from, valid_to, receipt_number, notes, req.params.id]
+    );
+
+    // Update expiry snapshot on vehicles (best-effort)
+    if (fee_type === 'registration') {
+      const maxValidTo = await dbGet(
+        "SELECT MAX(valid_to) as max_valid_to FROM vehicle_fees WHERE vehicle_id = ? AND fee_type = 'registration' AND valid_to IS NOT NULL",
+        [oldRecord.vehicle_id]
+      );
+      await dbRun('UPDATE vehicles SET registration_expiry = ? WHERE id = ?', [maxValidTo?.max_valid_to || null, oldRecord.vehicle_id]);
+    } else if (fee_type === 'insurance') {
+      const maxValidTo = await dbGet(
+        "SELECT MAX(valid_to) as max_valid_to FROM vehicle_fees WHERE vehicle_id = ? AND fee_type = 'insurance' AND valid_to IS NOT NULL",
+        [oldRecord.vehicle_id]
+      );
+      await dbRun('UPDATE vehicles SET insurance_expiry = ? WHERE id = ?', [maxValidTo?.max_valid_to || null, oldRecord.vehicle_id]);
+    }
+
+    logAudit(
+      req.user.id,
+      req.user.username,
+      req.user.role,
+      'update',
+      'vehicle_fees',
+      req.params.id,
+      oldRecord,
+      { fee_type, amount, paid_date, valid_to },
+      req.ip
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating fee:', error);
+    res.status(500).json({ error: 'Lỗi cập nhật phí' });
+  }
+});
+
+// Delete vehicle fee
+app.delete('/api/vehicle-fees/:id', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const record = await dbGet('SELECT * FROM vehicle_fees WHERE id = ?', [req.params.id]);
+    if (!record) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+
+    await dbRun('DELETE FROM vehicle_fees WHERE id = ?', [req.params.id]);
+
+    // Recompute expiry snapshot for the vehicle after delete (best-effort)
+    const maxReg = await dbGet(
+      "SELECT MAX(valid_to) as max_valid_to FROM vehicle_fees WHERE vehicle_id = ? AND fee_type = 'registration' AND valid_to IS NOT NULL",
+      [record.vehicle_id]
+    );
+    const maxIns = await dbGet(
+      "SELECT MAX(valid_to) as max_valid_to FROM vehicle_fees WHERE vehicle_id = ? AND fee_type = 'insurance' AND valid_to IS NOT NULL",
+      [record.vehicle_id]
+    );
+
+    await dbRun('UPDATE vehicles SET registration_expiry = ?, insurance_expiry = ? WHERE id = ?', [
+      maxReg?.max_valid_to || null,
+      maxIns?.max_valid_to || null,
+      record.vehicle_id
+    ]);
+
+    logAudit(
+      req.user.id,
+      req.user.username,
+      req.user.role,
+      'delete',
+      'vehicle_fees',
+      req.params.id,
+      record,
+      null,
+      req.ip
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting fee:', error);
+    res.status(500).json({ error: 'Lỗi xóa phí' });
   }
 });
 
@@ -3420,7 +3633,21 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
 // EXPORT EXCEL APIs
 // ====================
 
-const { exportFuelReport, exportCashFlowReport, exportCashFlowConsolidatedReport, exportExpenseReport, exportQuoteReport } = require('./excel-export');
+const {
+  exportFuelReport,
+  exportCashFlowReport,
+  exportCashFlowConsolidatedReport,
+  exportExpenseReport,
+  exportQuoteReport,
+  exportTableWorkbook,
+  exportMultiSheetWorkbook
+} = require('./excel-export');
+
+function sendExcelBuffer(res, filename, buffer) {
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
 
 // Export báo cáo nhiên liệu
 app.get('/api/export/fuel-records', authenticateToken, async (req, res) => {
@@ -3517,6 +3744,1143 @@ app.get('/api/export/quotes/:id/excel', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy báo giá' });
     }
     res.status(500).json({ error: 'Lỗi xuất báo giá' });
+  }
+});
+
+// ====================
+// EXPORT EXCEL: MASTER DATA + MODULE LIST/DETAIL
+// ====================
+
+// Drivers (list)
+app.get('/api/export/drivers', authenticateToken, async (req, res) => {
+  try {
+    const rows = await dbAll(`
+      SELECT id, name, phone, license_number, license_type, license_expiry, id_number, status, notes, created_at
+      FROM drivers
+      ORDER BY created_at DESC
+    `);
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Tài xế',
+      title: 'DANH SÁCH TÀI XẾ',
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Họ tên', key: 'name', width: 22 },
+        { header: 'Điện thoại', key: 'phone', width: 14 },
+        { header: 'GPLX', key: 'license_number', width: 16 },
+        { header: 'Loại', key: 'license_type', width: 8 },
+        { header: 'Hạn GPLX', key: 'license_expiry', width: 12 },
+        { header: 'CMND/CCCD', key: 'id_number', width: 14 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 28 }
+      ],
+      rows
+    });
+
+    sendExcelBuffer(res, `DanhSachTaiXe_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'drivers', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export drivers error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel tài xế' });
+  }
+});
+
+// Drivers (detail)
+app.get('/api/export/drivers/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const driver = await dbGet('SELECT * FROM drivers WHERE id = ?', [req.params.id]);
+    if (!driver) return res.status(404).json({ error: 'Không tìm thấy tài xế' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Tài xế',
+      title: `CHI TIẾT TÀI XẾ - ${driver.name || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Họ tên', key: 'name', width: 22 },
+        { header: 'Điện thoại', key: 'phone', width: 14 },
+        { header: 'CMND/CCCD', key: 'id_number', width: 14 },
+        { header: 'GPLX', key: 'license_number', width: 16 },
+        { header: 'Loại', key: 'license_type', width: 8 },
+        { header: 'Hạn GPLX', key: 'license_expiry', width: 12 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 28 }
+      ],
+      rows: [driver]
+    });
+
+    sendExcelBuffer(res, `TaiXe_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'drivers', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export driver detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết tài xế' });
+  }
+});
+
+// Vehicles (list)
+app.get('/api/export/vehicles', authenticateToken, async (req, res) => {
+  try {
+    const rows = await dbAll(`
+      SELECT id, plate_number, vehicle_type, status, registration_expiry, insurance_expiry, created_at
+      FROM vehicles
+      ORDER BY created_at DESC
+    `);
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Xe',
+      title: 'DANH SÁCH XE ĐẦU KÉO',
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Biển số', key: 'plate_number', width: 14 },
+        { header: 'Loại xe', key: 'vehicle_type', width: 16 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Hạn đăng kiểm', key: 'registration_expiry', width: 14 },
+        { header: 'Hạn bảo hiểm', key: 'insurance_expiry', width: 14 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows
+    });
+
+    sendExcelBuffer(res, `DanhSachXe_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'vehicles', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export vehicles error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel xe' });
+  }
+});
+
+// Vehicles (detail)
+app.get('/api/export/vehicles/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const vehicle = await dbGet('SELECT * FROM vehicles WHERE id = ?', [req.params.id]);
+    if (!vehicle) return res.status(404).json({ error: 'Không tìm thấy xe' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Xe',
+      title: `CHI TIẾT XE - ${vehicle.plate_number || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Biển số', key: 'plate_number', width: 14 },
+        { header: 'Loại xe', key: 'vehicle_type', width: 16 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Hạn đăng kiểm', key: 'registration_expiry', width: 14 },
+        { header: 'Hạn bảo hiểm', key: 'insurance_expiry', width: 14 },
+        { header: 'Ghi chú', key: 'notes', width: 28 }
+      ],
+      rows: [vehicle]
+    });
+
+    sendExcelBuffer(res, `Xe_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'vehicles', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export vehicle detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết xe' });
+  }
+});
+
+// Containers (list)
+app.get('/api/export/containers', authenticateToken, async (req, res) => {
+  try {
+    const rows = await dbAll(`
+      SELECT id, container_number, container_type, status, notes, created_at
+      FROM containers
+      ORDER BY created_at DESC
+    `);
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Container',
+      title: 'DANH SÁCH CONTAINER',
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Số container', key: 'container_number', width: 16 },
+        { header: 'Loại', key: 'container_type', width: 10 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 28 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows
+    });
+
+    sendExcelBuffer(res, `DanhSachContainer_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'containers', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export containers error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel container' });
+  }
+});
+
+// Containers (detail)
+app.get('/api/export/containers/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const container = await dbGet('SELECT * FROM containers WHERE id = ?', [req.params.id]);
+    if (!container) return res.status(404).json({ error: 'Không tìm thấy container' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Container',
+      title: `CHI TIẾT CONTAINER - ${container.container_number || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Số container', key: 'container_number', width: 16 },
+        { header: 'Loại', key: 'container_type', width: 10 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 28 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows: [container]
+    });
+
+    sendExcelBuffer(res, `Container_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'containers', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export container detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết container' });
+  }
+});
+
+// Routes (list)
+app.get('/api/export/routes', authenticateToken, async (req, res) => {
+  try {
+    const rows = await dbAll(`
+      SELECT id,
+        COALESCE(route_name, TRIM(COALESCE(origin, '') || ' - ' || COALESCE(destination, ''))) AS route_name,
+        origin, destination, distance_km, estimated_hours, created_at
+      FROM routes
+      ORDER BY created_at DESC
+    `);
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Tuyến',
+      title: 'DANH SÁCH TUYẾN ĐƯỜNG',
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Tên tuyến', key: 'route_name', width: 28 },
+        { header: 'Điểm đi', key: 'origin', width: 18 },
+        { header: 'Điểm đến', key: 'destination', width: 18 },
+        { header: 'Khoảng cách (km)', key: 'distance_km', width: 16, numFmt: '#,##0' },
+        { header: 'Giờ dự kiến', key: 'estimated_hours', width: 12 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows
+    });
+
+    sendExcelBuffer(res, `DanhSachTuyen_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'routes', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export routes error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel tuyến đường' });
+  }
+});
+
+// Routes (detail)
+app.get('/api/export/routes/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const route = await dbGet('SELECT * FROM routes WHERE id = ?', [req.params.id]);
+    if (!route) return res.status(404).json({ error: 'Không tìm thấy tuyến' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Tuyến',
+      title: `CHI TIẾT TUYẾN - ${route.route_name || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Tên tuyến', key: 'route_name', width: 28 },
+        { header: 'Điểm đi', key: 'origin', width: 18 },
+        { header: 'Điểm đến', key: 'destination', width: 18 },
+        { header: 'Khoảng cách (km)', key: 'distance_km', width: 16, numFmt: '#,##0' },
+        { header: 'Giờ dự kiến', key: 'estimated_hours', width: 12 }
+      ],
+      rows: [route]
+    });
+
+    sendExcelBuffer(res, `Tuyen_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'routes', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export route detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết tuyến' });
+  }
+});
+
+// Customers (list)
+app.get('/api/export/customers', authenticateToken, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const params = [];
+    let q = 'SELECT id, name, contact_person, phone, email, tax_code, address, status, credit_limit, current_debt, created_at FROM customers WHERE 1=1';
+    if (status) {
+      q += ' AND status = ?';
+      params.push(status);
+    }
+    q += ' ORDER BY created_at DESC';
+
+    const rows = await dbAll(q, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Khách hàng',
+      title: 'DANH SÁCH KHÁCH HÀNG',
+      metaLines: status ? [`Trạng thái: ${status}`] : [],
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Tên công ty', key: 'name', width: 26 },
+        { header: 'Người liên hệ', key: 'contact_person', width: 18 },
+        { header: 'Điện thoại', key: 'phone', width: 14 },
+        { header: 'Email', key: 'email', width: 22 },
+        { header: 'MST', key: 'tax_code', width: 14 },
+        { header: 'Hạn mức', key: 'credit_limit', width: 14, numFmt: '#,##0' },
+        { header: 'Công nợ', key: 'current_debt', width: 14, numFmt: '#,##0' },
+        { header: 'Trạng thái', key: 'status', width: 12 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `DanhSachKhachHang_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'customers', null, null, { scope: 'list', status }, req.ip);
+  } catch (error) {
+    console.error('Export customers error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel khách hàng' });
+  }
+});
+
+// Customers (detail)
+app.get('/api/export/customers/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const customer = await dbGet('SELECT * FROM customers WHERE id = ?', [req.params.id]);
+    if (!customer) return res.status(404).json({ error: 'Không tìm thấy khách hàng' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Khách hàng',
+      title: `CHI TIẾT KHÁCH HÀNG - ${customer.name || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Tên công ty', key: 'name', width: 26 },
+        { header: 'Người liên hệ', key: 'contact_person', width: 18 },
+        { header: 'Điện thoại', key: 'phone', width: 14 },
+        { header: 'Email', key: 'email', width: 22 },
+        { header: 'MST', key: 'tax_code', width: 14 },
+        { header: 'Địa chỉ', key: 'address', width: 30 },
+        { header: 'Hạn mức', key: 'credit_limit', width: 14, numFmt: '#,##0' },
+        { header: 'Công nợ', key: 'current_debt', width: 14, numFmt: '#,##0' },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 28 }
+      ],
+      rows: [customer]
+    });
+    sendExcelBuffer(res, `KhachHang_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'customers', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export customer detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết khách hàng' });
+  }
+});
+
+// Orders (list)
+app.get('/api/export/orders', authenticateToken, async (req, res) => {
+  try {
+    const { customer_id, from_date, to_date, status } = req.query;
+    const params = [];
+    let query = `
+      SELECT o.*, 
+        c.name as customer_name,
+        d.name as driver_name,
+        v.plate_number as vehicle_plate,
+        cn.container_number,
+        COALESCE(r.route_name, TRIM(COALESCE(r.origin, '') || ' - ' || COALESCE(r.destination, ''))) AS route_name
+      FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN vehicles v ON o.vehicle_id = v.id
+      LEFT JOIN containers cn ON o.container_id = cn.id
+      LEFT JOIN routes r ON o.route_id = r.id
+      WHERE 1=1
+    `;
+    if (customer_id) {
+      query += ' AND o.customer_id = ?';
+      params.push(customer_id);
+    }
+    if (from_date) {
+      query += ' AND o.order_date >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      query += ' AND o.order_date <= ?';
+      params.push(to_date);
+    }
+    if (status) {
+      query += ' AND o.status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY o.order_date DESC';
+
+    const rows = await dbAll(query, params);
+    const metaLines = [];
+    if (from_date || to_date) metaLines.push(`Từ ngày: ${from_date || ''}  Đến ngày: ${to_date || ''}`.trim());
+    if (status) metaLines.push(`Trạng thái: ${status}`);
+    if (customer_id) metaLines.push(`Customer ID: ${customer_id}`);
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Đơn hàng',
+      title: 'DANH SÁCH ĐƠN HÀNG',
+      metaLines,
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Mã đơn', key: 'order_code', width: 14 },
+        { header: 'Khách hàng', key: 'customer_name', width: 22 },
+        { header: 'Tuyến', key: 'route_name', width: 22 },
+        { header: 'Container', key: 'container_number', width: 14 },
+        { header: 'Xe', key: 'vehicle_plate', width: 12 },
+        { header: 'Tài xế', key: 'driver_name', width: 18 },
+        { header: 'Ngày', key: 'order_date', width: 12 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Cước', key: 'price', width: 14, numFmt: '#,##0' },
+        { header: 'Tổng (VAT)', key: 'final_amount', width: 14, numFmt: '#,##0' }
+      ],
+      rows
+    });
+
+    sendExcelBuffer(res, `DanhSachDonHang_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'orders', null, null, { scope: 'list', filters: { customer_id, from_date, to_date, status } }, req.ip);
+  } catch (error) {
+    console.error('Export orders error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel đơn hàng' });
+  }
+});
+
+// Orders (detail) - multi sheets
+app.get('/api/export/orders/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const order = await dbGet(`
+      SELECT o.*, 
+        c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+        d.name as driver_name, d.phone as driver_phone,
+        v.plate_number as vehicle_plate,
+        cn.container_number,
+        COALESCE(r.route_name, TRIM(COALESCE(r.origin, '') || ' - ' || COALESCE(r.destination, ''))) AS route_name,
+        r.origin, r.destination
+      FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
+      LEFT JOIN drivers d ON o.driver_id = d.id
+      LEFT JOIN vehicles v ON o.vehicle_id = v.id
+      LEFT JOIN containers cn ON o.container_id = cn.id
+      LEFT JOIN routes r ON o.route_id = r.id
+      WHERE o.id = ?
+    `, [orderId]);
+    if (!order) return res.status(404).json({ error: 'Không tìm thấy đơn hàng' });
+
+    const costs = await dbAll('SELECT * FROM trip_costs WHERE order_id = ? ORDER BY id ASC', [orderId]);
+    const payments = await dbAll('SELECT * FROM payments WHERE order_id = ? ORDER BY payment_date DESC, id DESC', [orderId]);
+    const advances = await dbAll('SELECT * FROM driver_advances WHERE order_id = ? ORDER BY advance_date DESC, id DESC', [orderId]);
+    const documents = await dbAll('SELECT * FROM documents WHERE order_id = ? ORDER BY uploaded_at DESC, id DESC', [orderId]);
+
+    const buffer = await exportMultiSheetWorkbook({
+      title: `CHI TIẾT ĐƠN HÀNG - ${order.order_code}`,
+      metaLines: [
+        `Mã đơn: ${order.order_code}`,
+        `Khách hàng: ${order.customer_name || ''}`,
+        `Ngày: ${order.order_date || ''}`
+      ],
+      sheets: [
+        {
+          name: 'Đơn hàng',
+          title: `THÔNG TIN ĐƠN HÀNG - ${order.order_code}`,
+          columns: [
+            { header: 'Mã đơn', key: 'order_code', width: 14 },
+            { header: 'Khách hàng', key: 'customer_name', width: 24 },
+            { header: 'Tuyến', key: 'route_name', width: 24 },
+            { header: 'Container', key: 'container_number', width: 14 },
+            { header: 'Xe', key: 'vehicle_plate', width: 12 },
+            { header: 'Tài xế', key: 'driver_name', width: 18 },
+            { header: 'Ngày', key: 'order_date', width: 12 },
+            { header: 'Trạng thái', key: 'status', width: 12 },
+            { header: 'Cước', key: 'price', width: 14, numFmt: '#,##0' },
+            { header: 'Néo xe', key: 'neo_xe', width: 14, numFmt: '#,##0' },
+            { header: 'Chi hộ', key: 'chi_ho', width: 14, numFmt: '#,##0' },
+            { header: 'Tổng (VAT)', key: 'final_amount', width: 14, numFmt: '#,##0' }
+          ],
+          rows: [order]
+        },
+        {
+          name: 'Chi phí',
+          title: `CHI PHÍ CHUYẾN - ${order.order_code}`,
+          columns: [
+            { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+            { header: 'Loại', key: 'cost_type', width: 14 },
+            { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+            { header: 'Ngày', key: 'cost_date', width: 12 },
+            { header: 'Mô tả', key: 'description', width: 30 }
+          ],
+          rows: costs
+        },
+        {
+          name: 'Thanh toán',
+          title: `THANH TOÁN - ${order.order_code}`,
+          columns: [
+            { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+            { header: 'Ngày', key: 'payment_date', width: 12 },
+            { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+            { header: 'Phương thức', key: 'payment_method', width: 14 },
+            { header: 'Ghi chú', key: 'notes', width: 30 }
+          ],
+          rows: payments
+        },
+        {
+          name: 'Tạm ứng',
+          title: `TẠM ỨNG - ${order.order_code}`,
+          columns: [
+            { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+            { header: 'Ngày', key: 'advance_date', width: 12 },
+            { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+            { header: 'Đã QT', key: 'settled', width: 10 },
+            { header: 'Ghi chú', key: 'notes', width: 30 }
+          ],
+          rows: advances
+        },
+        {
+          name: 'Chứng từ',
+          title: `CHỨNG TỪ - ${order.order_code}`,
+          columns: [
+            { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+            { header: 'Loại', key: 'document_type', width: 14 },
+            { header: 'Tên file', key: 'file_name', width: 30 },
+            { header: 'Ngày upload', key: 'uploaded_at', width: 18 }
+          ],
+          rows: documents
+        }
+      ]
+    });
+
+    sendExcelBuffer(res, `DonHang_${order.order_code}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'orders', orderId, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export order detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết đơn hàng' });
+  }
+});
+
+// Maintenance (list)
+app.get('/api/export/maintenance', authenticateToken, async (req, res) => {
+  try {
+    const { vehicle_id } = req.query;
+    const params = [];
+    let query = `
+      SELECT m.*, v.plate_number
+      FROM vehicle_maintenance m
+      LEFT JOIN vehicles v ON m.vehicle_id = v.id
+      WHERE 1=1
+    `;
+    if (vehicle_id) {
+      query += ' AND m.vehicle_id = ?';
+      params.push(vehicle_id);
+    }
+    query += ' ORDER BY m.maintenance_date DESC';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Bảo dưỡng',
+      title: 'DANH SÁCH BẢO DƯỠNG XE',
+      metaLines: vehicle_id ? [`Xe ID: ${vehicle_id}`] : [],
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Ngày', key: 'maintenance_date', width: 12 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Loại', key: 'maintenance_type', width: 18 },
+        { header: 'Số Km', key: 'odometer_reading', width: 12, numFmt: '#,##0' },
+        { header: 'Chi phí', key: 'cost', width: 14, numFmt: '#,##0' },
+        { header: 'Garage', key: 'garage', width: 18 },
+        { header: 'HĐ', key: 'invoice_number', width: 14 },
+        { header: 'Mô tả', key: 'description', width: 26 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `BaoDuong_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'maintenance', null, null, { scope: 'list', vehicle_id }, req.ip);
+  } catch (error) {
+    console.error('Export maintenance error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel bảo dưỡng' });
+  }
+});
+
+// Maintenance (detail)
+app.get('/api/export/maintenance/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const record = await dbGet(`
+      SELECT m.*, v.plate_number
+      FROM vehicle_maintenance m
+      LEFT JOIN vehicles v ON m.vehicle_id = v.id
+      WHERE m.id = ?
+    `, [req.params.id]);
+    if (!record) return res.status(404).json({ error: 'Không tìm thấy bảo dưỡng' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Bảo dưỡng',
+      title: `CHI TIẾT BẢO DƯỠNG - ${record.plate_number || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Ngày', key: 'maintenance_date', width: 12 },
+        { header: 'Loại', key: 'maintenance_type', width: 18 },
+        { header: 'Số Km', key: 'odometer_reading', width: 12, numFmt: '#,##0' },
+        { header: 'Chi phí', key: 'cost', width: 14, numFmt: '#,##0' },
+        { header: 'Hẹn lại', key: 'next_due_date', width: 12 },
+        { header: 'Km hẹn', key: 'next_due_odometer', width: 12, numFmt: '#,##0' },
+        { header: 'Garage', key: 'garage', width: 18 },
+        { header: 'HĐ', key: 'invoice_number', width: 14 },
+        { header: 'Mô tả', key: 'description', width: 26 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [record]
+    });
+    sendExcelBuffer(res, `BaoDuong_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'maintenance', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export maintenance detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết bảo dưỡng' });
+  }
+});
+
+// Vehicle fees (list)
+app.get('/api/export/vehicle-fees', authenticateToken, async (req, res) => {
+  try {
+    const { vehicle_id } = req.query;
+    const params = [];
+    let query = `
+      SELECT f.*, v.plate_number
+      FROM vehicle_fees f
+      LEFT JOIN vehicles v ON f.vehicle_id = v.id
+      WHERE 1=1
+    `;
+    if (vehicle_id) {
+      query += ' AND f.vehicle_id = ?';
+      params.push(vehicle_id);
+    }
+    query += ' ORDER BY f.paid_date DESC';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Phí xe',
+      title: 'DANH SÁCH PHÍ XE',
+      metaLines: vehicle_id ? [`Xe ID: ${vehicle_id}`] : [],
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Ngày trả', key: 'paid_date', width: 12 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Loại phí', key: 'fee_type', width: 14 },
+        { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+        { header: 'Từ', key: 'valid_from', width: 12 },
+        { header: 'Đến', key: 'valid_to', width: 12 },
+        { header: 'Số biên lai', key: 'receipt_number', width: 16 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `PhiXe_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'vehicle_fees', null, null, { scope: 'list', vehicle_id }, req.ip);
+  } catch (error) {
+    console.error('Export vehicle fees error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel phí xe' });
+  }
+});
+
+// Vehicle fees (detail)
+app.get('/api/export/vehicle-fees/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const fee = await dbGet(`
+      SELECT f.*, v.plate_number
+      FROM vehicle_fees f
+      LEFT JOIN vehicles v ON f.vehicle_id = v.id
+      WHERE f.id = ?
+    `, [req.params.id]);
+    if (!fee) return res.status(404).json({ error: 'Không tìm thấy phí xe' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Phí xe',
+      title: `CHI TIẾT PHÍ XE - ${fee.plate_number || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Loại phí', key: 'fee_type', width: 14 },
+        { header: 'Ngày trả', key: 'paid_date', width: 12 },
+        { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+        { header: 'Từ', key: 'valid_from', width: 12 },
+        { header: 'Đến', key: 'valid_to', width: 12 },
+        { header: 'Số biên lai', key: 'receipt_number', width: 16 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [fee]
+    });
+    sendExcelBuffer(res, `PhiXe_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'vehicle_fees', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export vehicle fee detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết phí xe' });
+  }
+});
+
+// Fuel records (detail)
+app.get('/api/export/fuel-records/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const record = await dbGet(`
+      SELECT fr.*, v.plate_number
+      FROM fuel_records fr
+      LEFT JOIN vehicles v ON fr.vehicle_id = v.id
+      WHERE fr.id = ?
+    `, [req.params.id]);
+    if (!record) return res.status(404).json({ error: 'Không tìm thấy phiếu nhiên liệu' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Nhiên liệu',
+      title: `CHI TIẾT NHIÊN LIỆU - ${record.plate_number || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Ngày', key: 'fuel_date', width: 12 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Loại nhiên liệu', key: 'fuel_type', width: 14 },
+        { header: 'Số lít', key: 'liters', width: 10, numFmt: '#,##0.00' },
+        { header: 'Giá/lít', key: 'price_per_liter', width: 12, numFmt: '#,##0' },
+        { header: 'Tổng tiền', key: 'total_cost', width: 14, numFmt: '#,##0' },
+        { header: 'Số Km', key: 'odometer_reading', width: 12, numFmt: '#,##0' },
+        { header: 'Trạm xăng', key: 'station_name', width: 18 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [record]
+    });
+    sendExcelBuffer(res, `NhienLieu_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'fuel_records', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export fuel detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết nhiên liệu' });
+  }
+});
+
+// Cash flow manual entry (detail)
+app.get('/api/export/cash-flow/:id/excel', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+  try {
+    const cf = await dbGet(`
+      SELECT cf.*, o.order_code, d.name as driver_name, v.plate_number
+      FROM cash_flow cf
+      LEFT JOIN orders o ON cf.order_id = o.id
+      LEFT JOIN drivers d ON cf.driver_id = d.id
+      LEFT JOIN vehicles v ON cf.vehicle_id = v.id
+      WHERE cf.id = ?
+    `, [req.params.id]);
+    if (!cf) return res.status(404).json({ error: 'Không tìm thấy giao dịch thu/chi' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'ThuChi',
+      title: 'CHI TIẾT THU/CHI (NHẬP TAY)',
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Ngày', key: 'transaction_date', width: 12 },
+        { header: 'Loại', key: 'type', width: 10 },
+        { header: 'Danh mục', key: 'category', width: 16 },
+        { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+        { header: 'Mô tả', key: 'description', width: 28 },
+        { header: 'Đơn hàng', key: 'order_code', width: 14 },
+        { header: 'Tài xế', key: 'driver_name', width: 18 },
+        { header: 'Xe', key: 'plate_number', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [cf]
+    });
+    sendExcelBuffer(res, `ThuChi_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'cash_flow', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export cash flow detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết thu/chi' });
+  }
+});
+
+// Salaries (list)
+app.get('/api/export/salaries', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+  try {
+    const { month, driver_id } = req.query;
+    const params = [];
+    let query = `
+      SELECT s.*, d.name as driver_name
+      FROM driver_salaries s
+      LEFT JOIN drivers d ON s.driver_id = d.id
+      WHERE 1=1
+    `;
+    if (month) {
+      query += ' AND s.salary_month = ?';
+      params.push(month);
+    }
+    if (driver_id) {
+      query += ' AND s.driver_id = ?';
+      params.push(driver_id);
+    }
+    query += ' ORDER BY s.salary_month DESC, d.name ASC';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Lương',
+      title: 'DANH SÁCH LƯƠNG TÀI XẾ',
+      metaLines: [
+        month ? `Tháng: ${month}` : null,
+        driver_id ? `Tài xế ID: ${driver_id}` : null
+      ].filter(Boolean),
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Tháng', key: 'salary_month', width: 10 },
+        { header: 'Tài xế', key: 'driver_name', width: 20 },
+        { header: 'Số chuyến', key: 'trip_count', width: 10, numFmt: '#,##0' },
+        { header: 'Lương cơ bản', key: 'base_salary', width: 14, numFmt: '#,##0' },
+        { header: 'Thưởng', key: 'trip_bonus', width: 12, numFmt: '#,##0' },
+        { header: 'Tăng ca', key: 'overtime_pay', width: 12, numFmt: '#,##0' },
+        { header: 'Phạt', key: 'deductions', width: 12, numFmt: '#,##0' },
+        { header: 'Trừ tạm ứng', key: 'advances_deducted', width: 14, numFmt: '#,##0' },
+        { header: 'Thực nhận', key: 'total_salary', width: 14, numFmt: '#,##0' },
+        { header: 'Trạng thái', key: 'status', width: 10 },
+        { header: 'Ngày trả', key: 'paid_date', width: 12 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `Luong_${month || 'TatCa'}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'salaries', null, null, { scope: 'list', month, driver_id }, req.ip);
+  } catch (error) {
+    console.error('Export salaries error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel lương' });
+  }
+});
+
+// Salaries (detail)
+app.get('/api/export/salaries/:id/excel', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
+  try {
+    const salary = await dbGet(`
+      SELECT s.*, d.name as driver_name, d.phone as driver_phone
+      FROM driver_salaries s
+      LEFT JOIN drivers d ON s.driver_id = d.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+    if (!salary) return res.status(404).json({ error: 'Không tìm thấy bản lương' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Lương',
+      title: `CHI TIẾT LƯƠNG - ${salary.driver_name || ''} (${salary.salary_month || ''})`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Tháng', key: 'salary_month', width: 10 },
+        { header: 'Tài xế', key: 'driver_name', width: 20 },
+        { header: 'Số chuyến', key: 'trip_count', width: 10, numFmt: '#,##0' },
+        { header: 'Lương cơ bản', key: 'base_salary', width: 14, numFmt: '#,##0' },
+        { header: 'Thưởng', key: 'trip_bonus', width: 12, numFmt: '#,##0' },
+        { header: 'Tăng ca', key: 'overtime_pay', width: 12, numFmt: '#,##0' },
+        { header: 'Phạt', key: 'deductions', width: 12, numFmt: '#,##0' },
+        { header: 'Trừ tạm ứng', key: 'advances_deducted', width: 14, numFmt: '#,##0' },
+        { header: 'Thực nhận', key: 'total_salary', width: 14, numFmt: '#,##0' },
+        { header: 'Trạng thái', key: 'status', width: 10 },
+        { header: 'Ngày trả', key: 'paid_date', width: 12 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [salary]
+    });
+    sendExcelBuffer(res, `Luong_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'salaries', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export salary detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết lương' });
+  }
+});
+
+// Bonuses & penalties (list)
+app.get('/api/export/bonuses-penalties', authenticateToken, async (req, res) => {
+  try {
+    const { driver_id, month } = req.query;
+    let query = `
+      SELECT bp.*, d.name as driver_name, o.order_code
+      FROM driver_bonuses_penalties bp
+      LEFT JOIN drivers d ON bp.driver_id = d.id
+      LEFT JOIN orders o ON bp.order_id = o.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (driver_id) {
+      query += ' AND bp.driver_id = ?';
+      params.push(driver_id);
+    }
+    if (month) {
+      query += ' AND strftime("%Y-%m", bp.date) = ?';
+      params.push(month);
+    }
+    query += ' ORDER BY bp.date DESC';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'ThưởngPhạt',
+      title: 'DANH SÁCH THƯỞNG / PHẠT',
+      metaLines: [
+        month ? `Tháng: ${month}` : null,
+        driver_id ? `Tài xế ID: ${driver_id}` : null
+      ].filter(Boolean),
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Ngày', key: 'date', width: 12 },
+        { header: 'Tài xế', key: 'driver_name', width: 20 },
+        { header: 'Loại', key: 'type', width: 10 },
+        { header: 'Lý do', key: 'reason', width: 26 },
+        { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+        { header: 'Đơn hàng', key: 'order_code', width: 14 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `ThuongPhat_${month || 'TatCa'}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'bonuses_penalties', null, null, { scope: 'list', month, driver_id }, req.ip);
+  } catch (error) {
+    console.error('Export bonuses penalties error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel thưởng/phạt' });
+  }
+});
+
+// Bonuses & penalties (detail)
+app.get('/api/export/bonuses-penalties/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const record = await dbGet(`
+      SELECT bp.*, d.name as driver_name, o.order_code
+      FROM driver_bonuses_penalties bp
+      LEFT JOIN drivers d ON bp.driver_id = d.id
+      LEFT JOIN orders o ON bp.order_id = o.id
+      WHERE bp.id = ?
+    `, [req.params.id]);
+    if (!record) return res.status(404).json({ error: 'Không tìm thấy thưởng/phạt' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'ThưởngPhạt',
+      title: `CHI TIẾT THƯỞNG/PHẠT - ${record.driver_name || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Ngày', key: 'date', width: 12 },
+        { header: 'Tài xế', key: 'driver_name', width: 20 },
+        { header: 'Loại', key: 'type', width: 10 },
+        { header: 'Lý do', key: 'reason', width: 26 },
+        { header: 'Số tiền', key: 'amount', width: 14, numFmt: '#,##0' },
+        { header: 'Đơn hàng', key: 'order_code', width: 14 },
+        { header: 'Ghi chú', key: 'notes', width: 26 }
+      ],
+      rows: [record]
+    });
+    sendExcelBuffer(res, `ThuongPhat_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'bonuses_penalties', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export bonus/penalty detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết thưởng/phạt' });
+  }
+});
+
+// Quotes (list)
+app.get('/api/export/quotes', authenticateToken, async (req, res) => {
+  try {
+    // Check if quotes table exists
+    const tableRow = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name='quotes'");
+    if (!tableRow) {
+      const buffer = await exportTableWorkbook({
+        sheetName: 'Báo giá',
+        title: 'DANH SÁCH BÁO GIÁ',
+        columns: [
+          { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+          { header: 'Số báo giá', key: 'quote_number', width: 14 }
+        ],
+        rows: []
+      });
+      return sendExcelBuffer(res, `DanhSachBaoGia_${Date.now()}.xlsx`, buffer);
+    }
+
+    const { status, customer_id } = req.query;
+    const params = [];
+    let query = `
+      SELECT q.*, c.name as customer_name
+      FROM quotes q
+      LEFT JOIN customers c ON q.customer_id = c.id
+      WHERE 1=1
+    `;
+    if (status) {
+      query += ' AND q.status = ?';
+      params.push(status);
+    }
+    if (customer_id) {
+      query += ' AND q.customer_id = ?';
+      params.push(customer_id);
+    }
+    query += ' ORDER BY q.quote_date DESC';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Báo giá',
+      title: 'DANH SÁCH BÁO GIÁ',
+      metaLines: [
+        status ? `Trạng thái: ${status}` : null,
+        customer_id ? `Khách hàng ID: ${customer_id}` : null
+      ].filter(Boolean),
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Số báo giá', key: 'quote_number', width: 14 },
+        { header: 'Khách hàng', key: 'customer_name', width: 24 },
+        { header: 'Ngày báo giá', key: 'quote_date', width: 12 },
+        { header: 'Hiệu lực', key: 'valid_until', width: 12 },
+        { header: 'Tuyến', key: 'route_from', width: 16 },
+        { header: 'Đến', key: 'route_to', width: 16 },
+        { header: 'Loại cont', key: 'container_type', width: 10 },
+        { header: 'Đơn giá', key: 'unit_price', width: 14, numFmt: '#,##0' },
+        { header: 'Tổng (VAT)', key: 'final_amount', width: 14, numFmt: '#,##0' },
+        { header: 'Trạng thái', key: 'status', width: 10 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `DanhSachBaoGia_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'quotes', null, null, { scope: 'list', status, customer_id }, req.ip);
+  } catch (error) {
+    console.error('Export quotes list error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel danh sách báo giá' });
+  }
+});
+
+// Users (admin only)
+app.get('/api/export/users', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const rows = await dbAll('SELECT id, username, fullname, role, status, created_at FROM users ORDER BY created_at DESC');
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Users',
+      title: 'DANH SÁCH USER',
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Username', key: 'username', width: 16 },
+        { header: 'Họ tên', key: 'fullname', width: 20 },
+        { header: 'Vai trò', key: 'role', width: 12 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `Users_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'users', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export users error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel users' });
+  }
+});
+
+// Users (detail)
+app.get('/api/export/users/:id/excel', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const user = await dbGet('SELECT id, username, fullname, role, status, created_at FROM users WHERE id = ?', [req.params.id]);
+    if (!user) return res.status(404).json({ error: 'Không tìm thấy user' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Users',
+      title: `CHI TIẾT USER - ${user.username || ''}`.trim(),
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Username', key: 'username', width: 16 },
+        { header: 'Họ tên', key: 'fullname', width: 20 },
+        { header: 'Vai trò', key: 'role', width: 12 },
+        { header: 'Trạng thái', key: 'status', width: 12 },
+        { header: 'Ngày tạo', key: 'created_at', width: 18 }
+      ],
+      rows: [user]
+    });
+    sendExcelBuffer(res, `User_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'users', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export user detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết user' });
+  }
+});
+
+// Audit logs (admin only)
+app.get('/api/export/audit-logs', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { from_date, to_date, user_id, action, entity } = req.query;
+    let query = `
+      SELECT 
+        al.*, u.username, u.fullname, u.role
+      FROM audit_logs al
+      LEFT JOIN users u ON al.user_id = u.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (from_date) {
+      query += ' AND al.created_at >= ?';
+      params.push(from_date);
+    }
+    if (to_date) {
+      query += ' AND al.created_at <= ?';
+      params.push(to_date + ' 23:59:59');
+    }
+    if (user_id) {
+      query += ' AND al.user_id = ?';
+      params.push(user_id);
+    }
+    if (action) {
+      query += ' AND al.action = ?';
+      params.push(action);
+    }
+    if (entity) {
+      query += ' AND al.entity = ?';
+      params.push(entity);
+    }
+    query += ' ORDER BY al.created_at DESC LIMIT 500';
+
+    const rows = await dbAll(query, params);
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Audit',
+      title: 'NHẬT KÝ HOẠT ĐỘNG',
+      metaLines: [
+        from_date || to_date ? `Từ: ${from_date || ''}  Đến: ${to_date || ''}`.trim() : null,
+        user_id ? `User ID: ${user_id}` : null,
+        action ? `Hành động: ${action}` : null,
+        entity ? `Đối tượng: ${entity}` : null
+      ].filter(Boolean),
+      columns: [
+        { header: 'STT', key: 'stt', width: 6, value: (_r, idx) => idx + 1 },
+        { header: 'Thời gian', key: 'created_at', width: 18 },
+        { header: 'User', key: 'username', width: 14 },
+        { header: 'Họ tên', key: 'fullname', width: 18 },
+        { header: 'Vai trò', key: 'role', width: 12 },
+        { header: 'Hành động', key: 'action', width: 14 },
+        { header: 'Đối tượng', key: 'entity', width: 14 },
+        { header: 'Entity ID', key: 'entity_id', width: 10 },
+        { header: 'IP', key: 'ip_address', width: 16 }
+      ],
+      rows
+    });
+    sendExcelBuffer(res, `AuditLogs_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'audit_logs', null, null, { scope: 'list' }, req.ip);
+  } catch (error) {
+    console.error('Export audit logs error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel audit logs' });
+  }
+});
+
+// Audit logs (detail)
+app.get('/api/export/audit-logs/:id/excel', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    const row = await dbGet(`
+      SELECT al.*, u.username, u.fullname, u.role
+      FROM audit_logs al
+      LEFT JOIN users u ON al.user_id = u.id
+      WHERE al.id = ?
+    `, [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy log' });
+
+    const buffer = await exportTableWorkbook({
+      sheetName: 'Audit',
+      title: `CHI TIẾT NHẬT KÝ #${row.id}`,
+      columns: [
+        { header: 'ID', key: 'id', width: 8 },
+        { header: 'Thời gian', key: 'created_at', width: 18 },
+        { header: 'User', key: 'username', width: 14 },
+        { header: 'Họ tên', key: 'fullname', width: 18 },
+        { header: 'Vai trò', key: 'role', width: 12 },
+        { header: 'Hành động', key: 'action', width: 14 },
+        { header: 'Đối tượng', key: 'entity', width: 14 },
+        { header: 'Entity ID', key: 'entity_id', width: 10 },
+        { header: 'IP', key: 'ip_address', width: 16 },
+        { header: 'Old', key: 'old_value', width: 30 },
+        { header: 'New', key: 'new_value', width: 30 }
+      ],
+      rows: [row]
+    });
+    sendExcelBuffer(res, `AuditLog_${req.params.id}_${Date.now()}.xlsx`, buffer);
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'audit_logs', req.params.id, null, { scope: 'detail' }, req.ip);
+  } catch (error) {
+    console.error('Export audit log detail error:', error);
+    res.status(500).json({ error: 'Lỗi xuất Excel chi tiết audit log' });
   }
 });
 

@@ -8,6 +8,11 @@ let server;
 async function startServer() {
   try {
     console.log('Dang khoi dong server...');
+
+    // Ensure DB lives in a writable, user-scoped folder for packaged installs
+    if (!process.env.FREIGHT_DB_DIR) {
+      process.env.FREIGHT_DB_DIR = app.getPath('userData');
+    }
     
     // Import server module
     const { startServerInstance } = require('./server');

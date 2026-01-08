@@ -120,6 +120,108 @@ async function apiCall(endpoint, options = {}) {
   }
 }
 
+// ==================== EXPORT HELPERS (EXCEL / PDF via Print) ====================
+async function downloadExcel(exportEndpoint, filename) {
+  try {
+    const response = await fetch(`${API_URL}${exportEndpoint}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        throw new Error(data.error || 'Có lỗi xảy ra');
+      }
+      const text = await response.text();
+      throw new Error(text || 'Có lỗi xảy ra');
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename || `Export_${Date.now()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    console.error('Export Excel error:', error);
+    alert('Lỗi xuất Excel: ' + error.message);
+  }
+}
+
+function openPrintWindow({ title, html, orientation = 'portrait' }) {
+  const win = window.open('', '', 'width=1200,height=800');
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>${title || ''}</title>
+      <link rel="stylesheet" href="css/style.css">
+      <style>
+        @media print {
+          .no-print, button, .btn, .modal-close { display: none !important; }
+          @page { size: A4 ${orientation}; margin: 10mm 12mm; }
+          body { background: white !important; margin: 0; padding: 0; }
+          #pageContent { padding: 0 !important; }
+        }
+        .print-title { margin: 0 0 12px 0; }
+        .print-meta { color: #666; font-size: 12px; margin: 0 0 10px 0; }
+        table { width: 100%; }
+      </style>
+    </head>
+    <body>
+      <h2 class="print-title">${title || ''}</h2>
+      <div class="print-meta">Ngày xuất: ${new Date().toLocaleString('vi-VN')}</div>
+      <div>${html || ''}</div>
+      <script>
+        window.onload = function() { setTimeout(function(){ window.print(); }, 300); };
+      </script>
+    </body>
+    </html>
+  `);
+  win.document.close();
+}
+
+function printElement({ title, element, orientation }) {
+  if (!element) {
+    alert('Không tìm thấy nội dung để in.');
+    return;
+  }
+  openPrintWindow({
+    title,
+    html: element.innerHTML,
+    orientation
+  });
+}
+
+async function printDetailFromApi({ title, endpoint, fields, orientation = 'portrait' }) {
+  try {
+    const data = await apiCall(endpoint);
+    const rowsHtml = (fields || []).map(f => {
+      const rawValue = typeof f.value === 'function' ? f.value(data) : data?.[f.key];
+      const display = rawValue === null || rawValue === undefined || rawValue === '' ? '-' : rawValue;
+      return `<tr><th style="text-align:left; width: 220px;">${f.label}</th><td>${display}</td></tr>`;
+    }).join('');
+
+    const html = `
+      <table class="data-table" style="border-collapse: collapse;">
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `;
+
+    openPrintWindow({ title, html, orientation });
+  } catch (error) {
+    alert('Lỗi in/PDF: ' + error.message);
+  }
+}
+
 // Helper function để chuyển FormData sang object
 function formDataToObject(formData) {
   const data = {};
@@ -554,11 +656,15 @@ async function renderOrders(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>📦 Quản lý đơn hàng</h1>
-        ${['admin', 'dispatcher'].includes(currentUser.role) ? `
-        <button class="btn btn-primary" onclick="showOrderModal()">
-          ➕ Tạo đơn mới
-        </button>
-        ` : ''}
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportOrdersExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printOrdersList()">🖨️ In/PDF</button>
+          ${['admin', 'dispatcher'].includes(currentUser.role) ? `
+          <button class="btn btn-primary" onclick="showOrderModal()">
+            ➕ Tạo đơn mới
+          </button>
+          ` : ''}
+        </div>
       </div>
       
       <div class="filters">
@@ -625,6 +731,8 @@ async function renderOrders(container) {
                       <td class="text-right"><strong>${formatMoney(order.price)}</strong></td>
                       <td class="actions">
                         <button class="btn btn-sm btn-primary" onclick="viewOrderDetail(${order.id})">Chi tiết</button>
+                        <button class="btn btn-sm btn-success" onclick="exportOrderDetailExcel(${order.id}, '${(order.order_code || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                        <button class="btn btn-sm btn-secondary" onclick="printOrderDetail(${order.id})" title="In/PDF">🖨️</button>
                         ${currentUser.role === 'admin' || currentUser.role === 'dispatcher' ? `<button class="btn btn-sm btn-warning" onclick="showOrderModal(${order.id})">Sửa</button>` : ''}
                         ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteOrder(${order.id})">Xóa</button>` : ''}
                       </td>
@@ -971,6 +1079,8 @@ async function viewOrderDetail(orderId) {
           <div class="modal-header">
             <h2>Chi tiết đơn hàng: ${order.order_code}</h2>
             <span class="badge ${order.status === 'completed' ? 'badge-active' : order.status === 'in-transit' ? 'badge-warning' : 'badge-pending'}">${getStatusBadge(order.status)}</span>
+            <button class="btn btn-sm btn-success" onclick="exportOrderDetailExcel(${orderId}, '${(order.order_code || '').replace(/'/g, "\\'")}')">📊 Xuất Excel</button>
+            <button class="btn btn-sm btn-secondary" onclick="printCurrentOrderDetail('${(order.order_code || '').replace(/'/g, "\\'")}')">🖨️ In/PDF</button>
             <button class="btn btn-sm btn-primary" onclick="editOrderFromDetail(${orderId})">✏️ Chỉnh sửa</button>
             <button class="modal-close" onclick="closeModal()">×</button>
           </div>
@@ -1215,6 +1325,61 @@ async function viewOrderDetail(orderId) {
     alert('Lỗi: ' + error.message);
   }
 }
+
+// ===== EXPORT / PRINT: ORDERS =====
+window.exportOrdersExcel = function() {
+  const customerId = document.getElementById('filterCustomer')?.value || '';
+  const status = document.getElementById('filterStatus')?.value || '';
+  const fromDate = document.getElementById('filterFromDate')?.value || '';
+  const toDate = document.getElementById('filterToDate')?.value || '';
+
+  const params = new URLSearchParams();
+  if (customerId) params.set('customer_id', customerId);
+  if (status) params.set('status', status);
+  if (fromDate) params.set('from_date', fromDate);
+  if (toDate) params.set('to_date', toDate);
+
+  const qs = params.toString();
+  downloadExcel(`/export/orders${qs ? `?${qs}` : ''}`, `DonHang_${Date.now()}.xlsx`);
+};
+
+window.exportOrderDetailExcel = function(orderId, orderCode) {
+  downloadExcel(`/export/orders/${orderId}/excel`, `DonHang_${orderCode || orderId}_${Date.now()}.xlsx`);
+};
+
+window.printOrdersList = function() {
+  const table = document.getElementById('ordersTable');
+  printElement({ title: 'Danh sách đơn hàng', element: table, orientation: 'landscape' });
+};
+
+window.printOrderDetail = async function(orderId) {
+  // Print a compact detail sheet (API) instead of the full interactive modal.
+  await printDetailFromApi({
+    title: `Chi tiết đơn hàng #${orderId}`,
+    endpoint: `/orders/${orderId}`,
+    orientation: 'portrait',
+    fields: [
+      { label: 'Mã đơn', key: 'order_code' },
+      { label: 'Khách hàng', key: 'customer_name' },
+      { label: 'Ngày đặt', value: d => (d.order_date ? formatDate(d.order_date) : '-') },
+      { label: 'Tuyến', key: 'route_name' },
+      { label: 'Container', key: 'container_number' },
+      { label: 'Xe', key: 'vehicle_plate' },
+      { label: 'Tài xế', key: 'driver_name' },
+      { label: 'Trạng thái', key: 'status' },
+      { label: 'Cước', value: d => formatMoney(d.price || 0) },
+      { label: 'Néo xe', value: d => formatMoney(d.neo_xe || 0) },
+      { label: 'Chi hộ', value: d => formatMoney(d.chi_ho || 0) },
+      { label: 'Tổng cuối', value: d => formatMoney(d.final_amount || d.price || 0) },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
+
+window.printCurrentOrderDetail = function(orderCode) {
+  const modalBody = document.querySelector('.modal .modal-body');
+  printElement({ title: `Chi tiết đơn hàng: ${orderCode || ''}`, element: modalBody, orientation: 'portrait' });
+};
 
 function showCostModal(orderId) {
   const modal = `
@@ -2022,11 +2187,15 @@ async function renderCustomers(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>👥 Quản lý khách hàng</h1>
-        ${['admin', 'sales'].includes(currentUser.role) ? `
-        <button class="btn btn-primary" onclick="showCustomerModal()">
-          ➕ Thêm khách hàng
-        </button>
-        ` : ''}
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportCustomersExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printCustomersList()">🖨️ In/PDF</button>
+          ${['admin', 'sales'].includes(currentUser.role) ? `
+          <button class="btn btn-primary" onclick="showCustomerModal()">
+            ➕ Thêm khách hàng
+          </button>
+          ` : ''}
+        </div>
       </div>
       
       <div class="card">
@@ -2055,6 +2224,8 @@ async function renderCustomers(container) {
                       <td>${c.tax_code || '-'}</td>
                       <td class="text-right ${c.current_debt > 0 ? 'text-danger' : ''}">${formatMoney(c.current_debt || 0)}</td>
                       <td class="actions">
+                        <button class="btn btn-sm btn-success" onclick="exportCustomerDetailExcel(${c.id}, '${(c.name || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                        <button class="btn btn-sm btn-secondary" onclick="printCustomerDetail(${c.id})" title="In/PDF">🖨️</button>
                         <button class="btn btn-sm btn-primary" onclick="showCustomerModal(${c.id})">Sửa</button>
                         ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteCustomer(${c.id})">Xóa</button>` : ''}
                       </td>
@@ -2154,6 +2325,39 @@ function showCustomerModal(customerId = null) {
   document.getElementById('modalContainer').innerHTML = modal;
 }
 
+// ===== EXPORT / PRINT: CUSTOMERS =====
+window.exportCustomersExcel = function() {
+  downloadExcel('/export/customers', `KhachHang_${Date.now()}.xlsx`);
+};
+
+window.exportCustomerDetailExcel = function(customerId, customerName) {
+  downloadExcel(`/export/customers/${customerId}/excel`, `KhachHang_${customerName || customerId}_${Date.now()}.xlsx`);
+};
+
+window.printCustomersList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách khách hàng', element: table, orientation: 'landscape' });
+};
+
+window.printCustomerDetail = async function(customerId) {
+  await printDetailFromApi({
+    title: `Chi tiết khách hàng #${customerId}`,
+    endpoint: `/customers/${customerId}`,
+    fields: [
+      { label: 'Tên công ty', key: 'name' },
+      { label: 'Loại khách hàng', key: 'customer_type' },
+      { label: 'Trạng thái', key: 'status' },
+      { label: 'Người liên hệ', key: 'contact_person' },
+      { label: 'Điện thoại', key: 'phone' },
+      { label: 'Email', key: 'email' },
+      { label: 'Mã số thuế', key: 'tax_code' },
+      { label: 'Địa chỉ', key: 'address' },
+      { label: 'Hạn mức công nợ', value: d => formatMoney(d.credit_limit || 0) },
+      { label: 'Công nợ hiện tại', value: d => formatMoney(d.current_debt || 0) }
+    ]
+  });
+};
+
 async function saveCustomer(event, customerId) {
   event.preventDefault();
   const formData = new FormData(event.target);
@@ -2214,11 +2418,15 @@ async function renderDrivers(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>🚗 Quản lý tài xế</h1>
-        ${['admin', 'dispatcher'].includes(currentUser.role) ? `
-        <button class="btn btn-primary" onclick="showDriverModal()">
-          ➕ Thêm tài xế
-        </button>
-        ` : ''}
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportDriversExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printDriversList()">🖨️ In/PDF</button>
+          ${['admin', 'dispatcher'].includes(currentUser.role) ? `
+          <button class="btn btn-primary" onclick="showDriverModal()">
+            ➕ Thêm tài xế
+          </button>
+          ` : ''}
+        </div>
       </div>
       
       <div class="card">
@@ -2247,6 +2455,8 @@ async function renderDrivers(container) {
                       <td>${d.id_number || '-'}</td>
                       <td>${d.status === 'active' ? '<span class="badge badge-active">Đang làm</span>' : '<span class="badge badge-inactive">Nghỉ việc</span>'}</td>
                       <td class="actions">
+                        <button class="btn btn-sm btn-success" onclick="exportDriverDetailExcel(${d.id}, '${(d.name || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                        <button class="btn btn-sm btn-secondary" onclick="printDriverDetail(${d.id})" title="In/PDF">🖨️</button>
                         <button class="btn btn-sm btn-primary" onclick="showDriverModal(${d.id})">Sửa</button>
                         ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteDriver(${d.id})">Xóa</button>` : ''}
                       </td>
@@ -2412,6 +2622,41 @@ async function deleteDriver(driverId) {
   }
 }
 
+// ===== EXPORT / PRINT: DRIVERS =====
+window.exportDriversExcel = function() {
+  downloadExcel('/export/drivers', `TaiXe_${Date.now()}.xlsx`);
+};
+
+window.exportDriverDetailExcel = function(driverId, driverName) {
+  downloadExcel(`/export/drivers/${driverId}/excel`, `TaiXe_${driverName || driverId}_${Date.now()}.xlsx`);
+};
+
+window.printDriversList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách tài xế', element: table, orientation: 'landscape' });
+};
+
+window.printDriverDetail = async function(driverId) {
+  await printDetailFromApi({
+    title: `Chi tiết tài xế #${driverId}`,
+    endpoint: `/drivers/${driverId}`,
+    fields: [
+      { label: 'Họ tên', key: 'name' },
+      { label: 'Điện thoại', key: 'phone' },
+      { label: 'CMND/CCCD', key: 'id_number' },
+      { label: 'Số GPLX', key: 'license_number' },
+      { label: 'Loại GPLX', key: 'license_type' },
+      { label: 'Hạn GPLX', value: d => (d.license_expiry ? formatDate(d.license_expiry) : '-') },
+      { label: 'Ngày sinh', value: d => (d.birth_date ? formatDate(d.birth_date) : '-') },
+      { label: 'Ngày vào làm', value: d => (d.hire_date ? formatDate(d.hire_date) : '-') },
+      { label: 'Lương cơ bản', value: d => formatMoney(d.base_salary || 0) },
+      { label: 'Địa chỉ', key: 'address' },
+      { label: 'Trạng thái', key: 'status' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
+
 // ==================== VEHICLES ====================
 async function renderVehicles(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Đang tải...</p></div>';
@@ -2422,11 +2667,15 @@ async function renderVehicles(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>🚛 Quản lý xe đầu kéo</h1>
-        ${['admin', 'dispatcher'].includes(currentUser.role) ? `
-        <button class="btn btn-primary" onclick="showVehicleModal()">
-          ➕ Thêm xe
-        </button>
-        ` : ''}
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportVehiclesExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printVehiclesList()">🖨️ In/PDF</button>
+          ${['admin', 'dispatcher'].includes(currentUser.role) ? `
+          <button class="btn btn-primary" onclick="showVehicleModal()">
+            ➕ Thêm xe
+          </button>
+          ` : ''}
+        </div>
       </div>
       
       <div class="card">
@@ -2461,6 +2710,8 @@ async function renderVehicles(container) {
                       <td>${v.insurance_expiry ? formatDate(v.insurance_expiry) : '-'}</td>
                       <td>${v.status === 'available' ? '<span class="badge badge-active">Sẵn sàng</span>' : '<span class="badge badge-pending">Đang chạy</span>'}</td>
                       <td class="actions">
+                        <button class="btn btn-sm btn-success" onclick="exportVehicleDetailExcel(${v.id}, '${(v.plate_number || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                        <button class="btn btn-sm btn-secondary" onclick="printVehicleDetail(${v.id})" title="In/PDF">🖨️</button>
                         <button class="btn btn-sm btn-primary" onclick="showVehicleModal(${v.id})">Sửa</button>
                         ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteVehicle(${v.id})">Xóa</button>` : ''}
                       </td>
@@ -2679,6 +2930,46 @@ async function deleteVehicle(vehicleId) {
   }
 }
 
+// ===== EXPORT / PRINT: VEHICLES =====
+window.exportVehiclesExcel = function() {
+  downloadExcel('/export/vehicles', `Xe_${Date.now()}.xlsx`);
+};
+
+window.exportVehicleDetailExcel = function(vehicleId, plateNumber) {
+  downloadExcel(`/export/vehicles/${vehicleId}/excel`, `Xe_${plateNumber || vehicleId}_${Date.now()}.xlsx`);
+};
+
+window.printVehiclesList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách xe', element: table, orientation: 'landscape' });
+};
+
+window.printVehicleDetail = async function(vehicleId) {
+  await printDetailFromApi({
+    title: `Chi tiết xe #${vehicleId}`,
+    endpoint: `/vehicles/${vehicleId}`,
+    fields: [
+      { label: 'Biển số', key: 'plate_number' },
+      { label: 'Loại xe', key: 'vehicle_type' },
+      { label: 'Hãng', key: 'brand' },
+      { label: 'Model', key: 'model' },
+      { label: 'Năm sản xuất', key: 'year' },
+      { label: 'Công suất', value: d => (d.engine_power ? `${d.engine_power} HP` : '-') },
+      { label: 'Tiêu hao (không/có hàng)', value: d => {
+          const empty = d.fuel_consumption_empty;
+          const loaded = d.fuel_consumption_loaded;
+          if (!empty && !loaded) return '-';
+          return `${empty || '-'} / ${loaded || '-'} L`;
+        }
+      },
+      { label: 'Trọng tải', value: d => (d.capacity ? `${d.capacity} tấn` : '-') },
+      { label: 'Hạn đăng kiểm', value: d => (d.registration_expiry ? formatDate(d.registration_expiry) : '-') },
+      { label: 'Hạn bảo hiểm', value: d => (d.insurance_expiry ? formatDate(d.insurance_expiry) : '-') },
+      { label: 'Trạng thái', key: 'status' }
+    ]
+  });
+};
+
 // ==================== CONTAINERS ====================
 async function renderContainers(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Đang tải...</p></div>';
@@ -2696,7 +2987,11 @@ async function renderContainers(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>📦 Quản lý Container</h1>
-        ${['admin', 'dispatcher'].includes(currentUser.role) ? `<button class="btn btn-primary" onclick="showContainerModal()">➕ Thêm container mới</button>` : ''}
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportContainersExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printContainersList()">🖨️ In/PDF</button>
+          ${['admin', 'dispatcher'].includes(currentUser.role) ? `<button class="btn btn-primary" onclick="showContainerModal()">➕ Thêm container mới</button>` : ''}
+        </div>
       </div>
       
       <div class="card">
@@ -2725,8 +3020,10 @@ async function renderContainers(container) {
                     <td>${c.current_location || '-'}</td>
                     <td>${c.status === 'available' ? '<span class="badge badge-active">Sẵn sàng</span>' : '<span class="badge badge-pending">Đang chạy</span>'}</td>
                     <td class="actions">
+                      <button class="btn btn-sm btn-success" onclick="exportContainerDetailExcel(${c.id}, '${(c.container_number || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                      <button class="btn btn-sm btn-secondary" onclick="printContainerDetail(${c.id})" title="In/PDF">🖨️</button>
                       <button class="btn btn-sm btn-primary" onclick="showContainerModal(${c.id})">Sửa</button>
-                      ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteContainer(${c.id}, '${c.container_number}')">Xóa</button>` : ''}
+                      ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteContainer(${c.id}, '${(c.container_number || '').replace(/'/g, "\\'")}')">Xóa</button>` : ''}
                     </td>
                   </tr>
                 `).join('')}
@@ -2841,6 +3138,34 @@ async function deleteContainer(containerId, containerNumber) {
   }
 }
 
+// ===== EXPORT / PRINT: CONTAINERS =====
+window.exportContainersExcel = function() {
+  downloadExcel('/export/containers', `Containers_${Date.now()}.xlsx`);
+};
+
+window.exportContainerDetailExcel = function(containerId, containerNumber) {
+  downloadExcel(`/export/containers/${containerId}/excel`, `Container_${containerNumber || containerId}_${Date.now()}.xlsx`);
+};
+
+window.printContainersList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách container', element: table, orientation: 'landscape' });
+};
+
+window.printContainerDetail = async function(containerId) {
+  await printDetailFromApi({
+    title: `Chi tiết container #${containerId}`,
+    endpoint: `/containers/${containerId}`,
+    fields: [
+      { label: 'Số container', key: 'container_number' },
+      { label: 'Loại', key: 'container_type' },
+      { label: 'Vị trí hiện tại', key: 'current_location' },
+      { label: 'Trạng thái', key: 'status' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
+
 // ==================== ROUTES ====================
 async function renderRoutes(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Đang tải...</p></div>';
@@ -2851,9 +3176,13 @@ async function renderRoutes(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>🗺️ Quản lý tuyến đường</h1>
-        <button class="btn btn-primary" onclick="showRouteModal()">
-          ➕ Thêm tuyến
-        </button>
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportRoutesExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printRoutesList()">🖨️ In/PDF</button>
+          <button class="btn btn-primary" onclick="showRouteModal()">
+            ➕ Thêm tuyến
+          </button>
+        </div>
       </div>
       
       <div class="card">
@@ -2880,6 +3209,8 @@ async function renderRoutes(container) {
                       <td class="text-center">${r.distance_km || '-'}</td>
                       <td class="text-center">${r.estimated_hours || '-'}</td>
                       <td class="actions">
+                        <button class="btn btn-sm btn-success" onclick="exportRouteDetailExcel(${r.id}, '${(r.route_name || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                        <button class="btn btn-sm btn-secondary" onclick="printRouteDetail(${r.id})" title="In/PDF">🖨️</button>
                         <button class="btn btn-sm btn-primary" onclick="showRouteModal(${r.id})">Sửa</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteRoute(${r.id})">Xóa</button>
                       </td>
@@ -2987,6 +3318,35 @@ async function deleteRoute(routeId) {
     alert('Lỗi: ' + error.message);
   }
 }
+
+// ===== EXPORT / PRINT: ROUTES =====
+window.exportRoutesExcel = function() {
+  downloadExcel('/export/routes', `TuyenDuong_${Date.now()}.xlsx`);
+};
+
+window.exportRouteDetailExcel = function(routeId, routeName) {
+  downloadExcel(`/export/routes/${routeId}/excel`, `Tuyen_${routeName || routeId}_${Date.now()}.xlsx`);
+};
+
+window.printRoutesList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách tuyến đường', element: table, orientation: 'landscape' });
+};
+
+window.printRouteDetail = async function(routeId) {
+  await printDetailFromApi({
+    title: `Chi tiết tuyến #${routeId}`,
+    endpoint: `/routes/${routeId}`,
+    fields: [
+      { label: 'Tên tuyến', key: 'route_name' },
+      { label: 'Điểm đi', key: 'origin' },
+      { label: 'Điểm đến', key: 'destination' },
+      { label: 'Khoảng cách (km)', key: 'distance_km' },
+      { label: 'Thời gian (giờ)', key: 'estimated_hours' },
+      { label: 'Ghi chú', key: 'notes' }
+    ]
+  });
+};
 
 // ==================== REPORTS ====================
 async function renderReports(container) {
@@ -4604,7 +4964,11 @@ async function renderUsers(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>👤 Quản lý User</h1>
-        <button class="btn btn-primary" onclick="showUserModal()">➕ Thêm user</button>
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportUsersExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printUsersList()">🖨️ In/PDF</button>
+          <button class="btn btn-primary" onclick="showUserModal()">➕ Thêm user</button>
+        </div>
       </div>
       
       <div class="card">
@@ -4640,6 +5004,8 @@ async function renderUsers(container) {
                     </td>
                     <td>${formatDate(user.created_at)}</td>
                     <td>
+                      <button class="btn btn-sm btn-success" onclick="exportUserDetailExcel(${user.id}, '${(user.username || '').replace(/'/g, "\\'")}')" title="Xuất Excel">📊</button>
+                      <button class="btn btn-sm btn-secondary" onclick="printUserDetail(${user.id})" title="In/PDF">🖨️</button>
                       <button class="btn btn-sm btn-primary" onclick="showUserModal(${user.id})">Sửa</button>
                       <button class="btn btn-sm btn-warning" onclick="showChangePasswordModal(${user.id})">Đổi MK</button>
                       <button class="btn btn-sm btn-danger" onclick="deleteUser(${user.id})">Xóa</button>
@@ -4852,6 +5218,35 @@ async function deleteUser(userId) {
   }
 }
 
+// ===== EXPORT / PRINT: USERS =====
+window.exportUsersExcel = function() {
+  downloadExcel('/export/users', `Users_${Date.now()}.xlsx`);
+};
+
+window.exportUserDetailExcel = function(userId, username) {
+  downloadExcel(`/export/users/${userId}/excel`, `User_${username || userId}_${Date.now()}.xlsx`);
+};
+
+window.printUsersList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Danh sách user', element: table, orientation: 'landscape' });
+};
+
+window.printUserDetail = async function(userId) {
+  await printDetailFromApi({
+    title: `Chi tiết user #${userId}`,
+    endpoint: `/users/${userId}`,
+    fields: [
+      { label: 'ID', key: 'id' },
+      { label: 'Username', key: 'username' },
+      { label: 'Họ tên', key: 'fullname' },
+      { label: 'Vai trò', key: 'role' },
+      { label: 'Trạng thái', key: 'status' },
+      { label: 'Ngày tạo', value: d => (d.created_at ? formatDate(d.created_at) : '-') }
+    ]
+  });
+};
+
 // ==================== AUDIT LOGS ====================
 async function renderAuditLogs(container) {
   container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Đang tải...</p></div>';
@@ -4863,6 +5258,10 @@ async function renderAuditLogs(container) {
     container.innerHTML = `
       <div class="page-header">
         <h1>📋 Nhật ký hoạt động</h1>
+        <div class="header-actions">
+          <button class="btn btn-success" onclick="exportAuditLogsExcel()">📊 Xuất Excel</button>
+          <button class="btn btn-secondary" onclick="printAuditLogsList()">🖨️ In/PDF</button>
+        </div>
       </div>
       
       <div class="filters">
@@ -4915,7 +5314,7 @@ async function renderAuditLogs(container) {
         <div class="card-body">
           ${logs.length > 0 ? `
             <div class="table-container">
-              <table>
+              <table class="audit-logs-table">
                 <thead>
                   <tr>
                     <th>Thời gian</th>
@@ -4945,9 +5344,9 @@ async function renderAuditLogs(container) {
                         <td>${log.entity_id || '-'}</td>
                         <td><small>${log.ip_address || '-'}</small></td>
                         <td>
-                          <button class="btn btn-sm btn-info" onclick="window.showAuditDetail(${log.id}, ${JSON.stringify(log.old_value || '').replace(/"/g, '&quot;')}, ${JSON.stringify(log.new_value || '').replace(/"/g, '&quot;')})">
-                            👁️ Xem
-                          </button>
+                          <button class="btn btn-sm btn-info" onclick="window.showAuditDetail(${log.id}, ${JSON.stringify(log.old_value || '').replace(/"/g, '&quot;')}, ${JSON.stringify(log.new_value || '').replace(/"/g, '&quot;')})">👁️ Xem</button>
+                          <button class="btn btn-sm btn-success" onclick="exportAuditLogDetailExcel(${log.id})" title="Xuất Excel">📊</button>
+                          <button class="btn btn-sm btn-secondary" onclick="printAuditLogDetail(${log.id})" title="In/PDF">🖨️</button>
                         </td>
                       </tr>
                     `;
@@ -4998,6 +5397,53 @@ function formatDateTime(dateStr) {
     second: '2-digit'
   });
 }
+
+// ===== EXPORT / PRINT: AUDIT LOGS =====
+window.exportAuditLogsExcel = function() {
+  const fromDate = document.getElementById('auditFromDate')?.value || '';
+  const toDate = document.getElementById('auditToDate')?.value || '';
+  const userId = document.getElementById('auditUser')?.value || '';
+  const action = document.getElementById('auditAction')?.value || '';
+  const entity = document.getElementById('auditEntity')?.value || '';
+
+  const params = new URLSearchParams();
+  if (fromDate) params.set('from_date', fromDate);
+  if (toDate) params.set('to_date', toDate);
+  if (userId) params.set('user_id', userId);
+  if (action) params.set('action', action);
+  if (entity) params.set('entity', entity);
+
+  const qs = params.toString();
+  downloadExcel(`/export/audit-logs${qs ? `?${qs}` : ''}`, `AuditLogs_${Date.now()}.xlsx`);
+};
+
+window.exportAuditLogDetailExcel = function(logId) {
+  downloadExcel(`/export/audit-logs/${logId}/excel`, `AuditLog_${logId}_${Date.now()}.xlsx`);
+};
+
+window.printAuditLogsList = function() {
+  const table = document.querySelector('.table-container');
+  printElement({ title: 'Nhật ký hoạt động', element: table, orientation: 'landscape' });
+};
+
+window.printAuditLogDetail = async function(logId) {
+  await printDetailFromApi({
+    title: `Chi tiết nhật ký #${logId}`,
+    endpoint: `/audit-logs/${logId}`,
+    orientation: 'portrait',
+    fields: [
+      { label: 'Thời gian', value: d => formatDateTime(d.created_at) },
+      { label: 'Người dùng', value: d => (d.fullname || d.username || 'System') },
+      { label: 'Vai trò', key: 'role' },
+      { label: 'Hành động', key: 'action' },
+      { label: 'Đối tượng', key: 'entity' },
+      { label: 'Entity ID', key: 'entity_id' },
+      { label: 'IP', key: 'ip_address' },
+      { label: 'Old value', key: 'old_value' },
+      { label: 'New value', key: 'new_value' }
+    ]
+  });
+};
 
 window.filterAuditLogs = async function() {
   const fromDate = document.getElementById('auditFromDate').value;
@@ -5090,6 +5536,8 @@ window.showAuditDetail = function(logId, oldValue, newValue) {
         </div>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-success" onclick="exportAuditLogDetailExcel(${logId})">📊 Xuất Excel</button>
+        <button class="btn btn-secondary" onclick="printAuditLogDetail(${logId})">🖨️ In/PDF</button>
         <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Đóng</button>
       </div>
     </div>
@@ -5164,6 +5612,12 @@ window.closeModal = closeModal;
 window.formatMoney = formatMoney;
 window.formatDate = formatDate;
 window.formatDateForInput = formatDateForInput;
+
+// Export helpers
+window.downloadExcel = downloadExcel;
+window.openPrintWindow = openPrintWindow;
+window.printElement = printElement;
+window.printDetailFromApi = printDetailFromApi;
 
 console.log('✅ App.js loaded - All functions exported to window scope');
 
