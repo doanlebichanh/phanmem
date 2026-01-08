@@ -1307,13 +1307,11 @@ function toggleFuelFields(costType) {
 
 async function editOrderFromDetail(orderId) {
   try {
-    // Close current detail modal
     closeModal();
-    
-    // Load fresh order data
+
     const order = await apiCall(`/orders/${orderId}`);
     const { customers, containers, drivers, vehicles, routes } = window.ordersData;
-    
+
     const modal = `
       <div class="modal-overlay" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
@@ -1327,166 +1325,156 @@ async function editOrderFromDetail(orderId) {
                 <label>Khách hàng *</label>
                 <select name="customer_id" required>
                   <option value="">-- Chọn khách hàng --</option>
-                  ${customers.map(c => \`
-                    <option value="\${c.id}" \${order.customer_id == c.id ? 'selected' : ''}>
-                      \${c.name}
-                    </option>
-                  \`).join('')}
+                  ${customers.map(c => `
+                    <option value="${c.id}" ${order.customer_id == c.id ? 'selected' : ''}>${c.name}</option>
+                  `).join('')}
                 </select>
               </div>
               <div class="form-group">
                 <label>Ngày đặt hàng *</label>
-                <input type="date" name="order_date" value="\${formatDateForInput(order.order_date)}" required>
+                <input type="date" name="order_date" value="${formatDateForInput(order.order_date)}" required>
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Tuyến đường</label>
                 <select name="route_id">
                   <option value="">-- Chọn tuyến --</option>
-                  ${routes.map(r => \`
-                    <option value="\${r.id}" \${order.route_id === r.id ? 'selected' : ''}>
-                      \${r.route_name}
-                    </option>
-                  \`).join('')}
+                  ${routes.map(r => `
+                    <option value="${r.id}" ${order.route_id == r.id ? 'selected' : ''}>${r.route_name}</option>
+                  `).join('')}
                 </select>
               </div>
               <div class="form-group">
                 <label>Container *</label>
                 <select name="container_id" required>
                   <option value="">-- Chọn container --</option>
-                  ${containers.map(c => \`
-                    <option value="\${c.id}" \${order.container_id === c.id ? 'selected' : ''}>
-                      \${c.container_number}
-                    </option>
-                  \`).join('')}
+                  ${containers.map(c => `
+                    <option value="${c.id}" ${order.container_id == c.id ? 'selected' : ''}>${c.container_number}</option>
+                  `).join('')}
                 </select>
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Xe vận chuyển</label>
                 <select name="vehicle_id">
                   <option value="">-- Chọn xe --</option>
-                  ${vehicles.map(v => \`
-                    <option value="\${v.id}" \${order.vehicle_id === v.id ? 'selected' : ''}>
-                      \${v.plate_number}
-                    </option>
-                  \`).join('')}
+                  ${vehicles.map(v => `
+                    <option value="${v.id}" ${order.vehicle_id == v.id ? 'selected' : ''}>${v.plate_number}</option>
+                  `).join('')}
                 </select>
               </div>
               <div class="form-group">
                 <label>Tài xế</label>
                 <select name="driver_id">
                   <option value="">-- Chọn tài xế --</option>
-                  ${drivers.map(d => \`
-                    <option value="\${d.id}" \${order.driver_id === d.id ? 'selected' : ''}>
-                      \${d.name}
-                    </option>
-                  \`).join('')}
+                  ${drivers.map(d => `
+                    <option value="${d.id}" ${order.driver_id == d.id ? 'selected' : ''}>${d.name}</option>
+                  `).join('')}
                 </select>
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Địa điểm nhận hàng</label>
-                <input type="text" name="pickup_location" value="\${order.pickup_location || ''}" placeholder="VD: Kho số 1 tại Bình Dương">
+                <input type="text" name="pickup_location" value="${order.pickup_location || ''}">
               </div>
               <div class="form-group">
                 <label>Ngày nhận hàng</label>
-                <input type="date" name="pickup_date" value="\${order.pickup_date ? formatDateForInput(order.pickup_date) : ''}">
+                <input type="date" name="pickup_date" value="${order.pickup_date ? formatDateForInput(order.pickup_date) : ''}">
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Địa điểm giao hàng</label>
-                <input type="text" name="delivery_location" value="\${order.delivery_location || ''}" placeholder="VD: Kho nhận tại TP.HCM">
+                <input type="text" name="delivery_location" value="${order.delivery_location || ''}">
               </div>
               <div class="form-group">
                 <label>Ngày giao hàng</label>
-                <input type="date" name="delivery_date" value="\${order.delivery_date ? formatDateForInput(order.delivery_date) : ''}">
+                <input type="date" name="delivery_date" value="${order.delivery_date ? formatDateForInput(order.delivery_date) : ''}">
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Điểm dừng trung gian</label>
-                <input type="text" name="intermediate_point" value="\${order.intermediate_point || ''}" placeholder="Có nếu cần">
+                <input type="text" name="intermediate_point" value="${order.intermediate_point || ''}">
               </div>
             </div>
-            
+
             <div class="form-group">
               <label>Mô tả hàng hóa</label>
-              <textarea name="cargo_description" rows="2" placeholder="VD: 50 thùng carton hàng điện tử">\${order.cargo_description || ''}</textarea>
+              <textarea name="cargo_description" rows="2">${order.cargo_description || ''}</textarea>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Số lượng</label>
-                <input type="number" name="quantity" step="0.01" value="\${order.quantity || ''}">
+                <input type="number" name="quantity" step="0.01" value="${order.quantity || ''}">
               </div>
               <div class="form-group">
                 <label>Trọng lượng (tấn)</label>
-                <input type="number" name="weight" step="0.01" value="\${order.weight || ''}">
+                <input type="number" name="weight" step="0.01" value="${order.weight || ''}">
               </div>
               <div class="form-group">
                 <label>Giá cước cơ bản (VND)</label>
-                <input type="number" name="price" step="1000" value="\${order.price || ''}" required>
+                <input type="number" name="price" step="1000" value="${order.price || ''}" required>
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Nẹo xe (VND)</label>
-                <input type="number" name="neo_xe" step="1000" value="\${order.neo_xe || 0}">
+                <input type="number" name="neo_xe" step="1000" value="${order.neo_xe || 0}">
               </div>
               <div class="form-group">
                 <label>Chi hộ (VND)</label>
-                <input type="number" name="chi_ho" step="1000" value="\${order.chi_ho || 0}">
+                <input type="number" name="chi_ho" step="1000" value="${order.chi_ho || 0}">
               </div>
               <div class="form-group">
                 <label>Thuế VAT (%)</label>
-                <input type="number" name="vat_rate" step="0.01" value="\${(order.vat_rate ? order.vat_rate * 100 : 10)}">
+                <input type="number" name="vat_rate" step="0.01" value="${order.vat_rate ? (Number(order.vat_rate) * 100) : 10}">
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Số hiệu vận đơn</label>
-                <input type="text" name="booking_number" value="\${order.booking_number || ''}" placeholder="VD: VĐ123456">
+                <input type="text" name="booking_number" value="${order.booking_number || ''}">
               </div>
               <div class="form-group">
                 <label>Số hiệu bộ hàng</label>
-                <input type="text" name="bill_of_lading" value="\${order.bill_of_lading || ''}" placeholder="VD: BH123456">
+                <input type="text" name="bill_of_lading" value="${order.bill_of_lading || ''}">
               </div>
             </div>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label>Số seal</label>
-                <input type="text" name="seal_number" value="\${order.seal_number || ''}" placeholder="VD: SEAL123456">
+                <input type="text" name="seal_number" value="${order.seal_number || ''}">
               </div>
               <div class="form-group">
                 <label>Loại hàng hóa</label>
-                <input type="text" name="cargo_type" value="\${order.cargo_type || ''}" placeholder="VD: Điện tử, Hóa chất, v.v">
+                <input type="text" name="cargo_type" value="${order.cargo_type || ''}">
               </div>
             </div>
-            
+
             <div class="form-group">
               <label>Ghi chú</label>
-              <textarea name="notes" rows="2" placeholder="Thêm ghi chú nếu cần...">\${order.notes || ''}</textarea>
+              <textarea name="notes" rows="2">${order.notes || ''}</textarea>
             </div>
-            
+
             <div class="form-group">
               <label>Trạng thái</label>
               <select name="status">
-                <option value="pending" \${order.status === 'pending' ? 'selected' : ''}>Chờ xử lý</option>
-                <option value="in-transit" \${order.status === 'in-transit' ? 'selected' : ''}>Đang vận chuyển</option>
-                <option value="completed" \${order.status === 'completed' ? 'selected' : ''}>Hoàn thành</option>
+                <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Chờ xử lý</option>
+                <option value="in-transit" ${order.status === 'in-transit' ? 'selected' : ''}>Đang vận chuyển</option>
+                <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>Hoàn thành</option>
               </select>
             </div>
           </form>
@@ -1497,7 +1485,7 @@ async function editOrderFromDetail(orderId) {
         </div>
       </div>
     `;
-    
+
     document.getElementById('modalContainer').innerHTML = modal;
   } catch (error) {
     showError(null, 'Lỗi tải dữ liệu: ' + error.message);
@@ -1509,13 +1497,12 @@ async function saveEditOrder(e, orderId) {
   try {
     const formData = new FormData(document.getElementById('editOrderForm'));
     const data = Object.fromEntries(formData);
-    
-    // Convert VAT from % to decimal
-    if (data.vat_rate) {
+
+    if (data.vat_rate !== undefined && data.vat_rate !== null && data.vat_rate !== '') {
       data.vat_rate = parseFloat(data.vat_rate) / 100;
     }
-    
-    await apiCall(\`/orders/\${orderId}\`, 'PUT', data);
+
+    await apiCall(`/orders/${orderId}`, 'PUT', data);
     showSuccess('Cập nhật đơn hàng thành công');
     closeModal();
     loadOrders();
