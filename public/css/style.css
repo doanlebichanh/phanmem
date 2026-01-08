@@ -18,11 +18,15 @@
   --sidebar-width: 220px;
 }
 
+html {
+  font-size: 14px;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   background: var(--light);
   color: var(--dark);
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 /* ==================== LOGIN PAGE ==================== */
@@ -55,17 +59,17 @@ body {
 }
 
 .login-header h1 {
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   margin-bottom: 8px;
 }
 
 .login-header p {
   opacity: 0.9;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .login-form {
-  padding: 30px 20px;
+  padding: 24px 18px;
 }
 
 .login-form input {
@@ -99,42 +103,32 @@ body {
 }
 
 .sidebar-header {
-  padding: 14px 14px 10px;
+  padding: 12px 12px 8px;
   border-bottom: 1px solid rgba(255,255,255,0.1);
 }
 
 .sidebar-header h2 {
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   margin-bottom: 8px;
   text-align: center;
   letter-spacing: 0.6px;
 }
 
 .user-info {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   opacity: 0.8;
   text-align: center;
 }
 
 .btn-logout {
   margin-top: 8px;
-  font-size: 0.8rem;
-  padding: 6px 10px;
+  font-size: 0.75rem;
+  padding: 5px 10px;
   background: rgba(255,255,255,0.1);
   color: white;
   border: 1px solid rgba(255,255,255,0.2);
   border-radius: 4px;
   cursor: pointer;
-}
-
-.sidebar-nav {
-  flex: 1;
-  overflow-y: auto;
-}
-
-.nav-item {
-  padding: 10px 14px;
-  font-size: 0.9rem;
 }
 
 .sidebar-footer {
@@ -143,7 +137,7 @@ body {
 }
 
 .sidebar-footer-title {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   opacity: 0.75;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -168,7 +162,8 @@ body {
 
 .nav-item {
   display: block;
-  padding: 12px 20px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
   color: rgba(255,255,255,0.8);
   text-decoration: none;
   transition: all 0.2s;
@@ -193,7 +188,7 @@ body {
 }
 
 #pageContent {
-  padding: 30px;
+  padding: 20px;
   max-width: 1400px;
 }
 
@@ -202,23 +197,23 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 30px;
-  padding-bottom: 15px;
+  margin-bottom: 20px;
+  padding-bottom: 10px;
   border-bottom: 2px solid var(--border);
 }
 
 .page-header h1 {
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   color: var(--dark);
 }
 
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .form-group label {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-weight: 500;
   color: var(--dark);
 }
@@ -227,10 +222,10 @@ body {
 .form-group select,
 .form-group textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 2px solid var(--border);
   border-radius: 6px;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   transition: all 0.2s;
   cursor: text;
   color: var(--dark);
@@ -270,10 +265,10 @@ body {
 
 /* ==================== BUTTONS ==================== */
 .btn {
-  padding: 10px 20px;
+  padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
@@ -321,8 +316,8 @@ body {
 }
 
 .btn-sm {
-  padding: 6px 12px;
-  font-size: 0.85rem;
+  padding: 5px 10px;
+  font-size: 0.8rem;
 }
 
 .btn-block {
@@ -334,13 +329,13 @@ body {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 20px;
-  margin-bottom: 30px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .stat-card {
   background: white;
-  padding: 20px;
+  padding: 16px;
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   border-left: 4px solid var(--primary);
@@ -359,13 +354,13 @@ body {
 }
 
 .stat-label {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--secondary);
   margin-bottom: 8px;
 }
 
 .stat-value {
-  font-size: 2rem;
+  font-size: 1.7rem;
   font-weight: 700;
   color: var(--dark);
 }
@@ -386,7 +381,7 @@ body {
 }
 
 .card-header {
-  padding: 20px;
+  padding: 16px;
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -394,12 +389,12 @@ body {
 }
 
 .card-header h3 {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   color: var(--dark);
 }
 
 .card-body {
-  padding: 20px;
+  padding: 16px;
 }
 
 /* ==================== TABLES ==================== */
@@ -414,6 +409,7 @@ table {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  font-size: 0.9rem;
 }
 
 thead {
@@ -422,14 +418,14 @@ thead {
 }
 
 th {
-  padding: 12px 15px;
+  padding: 10px 12px;
   text-align: left;
   font-weight: 600;
   font-size: 0.9rem;
 }
 
 td {
-  padding: 12px 15px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -443,7 +439,7 @@ tbody tr:last-child td {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 /* ==================== BADGES ==================== */
