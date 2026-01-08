@@ -3023,7 +3023,7 @@ async function renderReports(container) {
         if (c.cost_date) {
           const month = c.cost_date.substring(0, 7);
           if (!monthlyCosts[month]) monthlyCosts[month] = 0;
-          monthlyCosts[month] += (c.total_amount || 0);
+          monthlyCosts[month] += (c.amount || c.total_amount || 0);
         }
       });
     } catch (e) {
@@ -3401,7 +3401,7 @@ async function loadCostsByTypeReport() {
         };
       }
       costsByType[type].count += 1;
-      costsByType[type].total += (c.total_amount || 0);
+      costsByType[type].total += (c.amount || c.total_amount || 0);
     });
     
     const costTypes = Object.entries(costsByType)
@@ -3466,8 +3466,8 @@ window.filterReports = async function() {
   const toDate = document.getElementById('reportToDate').value;
   
   const params = new URLSearchParams();
-  if (fromDate) params.append('from', fromDate);
-  if (toDate) params.append('to', toDate);
+  if (fromDate) params.append('from_date', fromDate);
+  if (toDate) params.append('to_date', toDate);
   
   try {
     const overview = await apiCall(`/reports/overview?${params.toString()}`);

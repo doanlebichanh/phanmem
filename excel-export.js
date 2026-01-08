@@ -322,6 +322,114 @@ async function exportCashFlowReport(db, filters = {}) {
   });
 }
 
+async function exportCashFlowConsolidatedReport(records = [], filters = {}) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Báo Cáo Dòng Tiền');
+
+  // Tiêu đề
+  worksheet.mergeCells('A1:H1');
+  worksheet.getCell('A1').value = 'BÁO CÁO DÒNG TIỀN (TỔNG HỢP)';
+  worksheet.getCell('A1').style = titleStyle;
+
+  // Thông tin bộ lọc
+  let rowNum = 2;
+  if (filters.from) {
+    worksheet.mergeCells(`A${rowNum}:H${rowNum}`);
+    worksheet.getCell(`A${rowNum}`).value = `Từ ngày: ${formatDate(filters.from)} - Đến ngày: ${formatDate(filters.to)}`;
+    rowNum++;
+  }
+  if (filters.type) {
+    worksheet.mergeCells(`A${rowNum}:H${rowNum}`);
+    worksheet.getCell(`A${rowNum}`).value = `Loại: ${filters.type === 'income' ? 'Thu' : 'Chi'}`;
+    rowNum++;
+  }
+
+  worksheet.mergeCells(`A${rowNum}:H${rowNum}`);
+  worksheet.getCell(`A${rowNum}`).value = `Ngày xuất: ${formatDate(new Date())}`;
+  rowNum += 2;
+
+  const headerRow = rowNum;
+  const headers = ['STT', 'Ngày', 'Loại', 'Danh mục', 'Số tiền', 'Mô tả', 'Nguồn', 'Tham chiếu'];
+  headers.forEach((header, index) => {
+    const cell = worksheet.getCell(headerRow, index + 1);
+    cell.value = header;
+    cell.style = headerStyle;
+  });
+
+  const filtered = (filters.type ? records.filter(r => r.type === filters.type) : records)
+    .filter(r => r && r.transaction_date);
+
+  let currentRow = headerRow + 1;
+  let totalIncome = 0;
+  let totalExpense = 0;
+
+  filtered.forEach((record, index) => {
+    worksheet.getCell(currentRow, 1).value = index + 1;
+    worksheet.getCell(currentRow, 2).value = formatDate(record.transaction_date);
+    worksheet.getCell(currentRow, 3).value = record.type === 'income' ? 'Thu' : 'Chi';
+    worksheet.getCell(currentRow, 4).value = record.category || '';
+    worksheet.getCell(currentRow, 5).value = Number(record.amount || 0);
+    worksheet.getCell(currentRow, 6).value = record.description || '';
+    worksheet.getCell(currentRow, 7).value = record.source || '';
+    worksheet.getCell(currentRow, 8).value = record.reference || '';
+
+    worksheet.getCell(currentRow, 5).numFmt = '#,##0';
+    if (record.type === 'income') {
+      worksheet.getCell(currentRow, 5).font = { color: { argb: 'FF008000' } };
+      totalIncome += Number(record.amount || 0);
+    } else {
+      worksheet.getCell(currentRow, 5).font = { color: { argb: 'FFFF0000' } };
+      totalExpense += Number(record.amount || 0);
+    }
+
+    currentRow++;
+  });
+
+  // Tổng cộng
+  worksheet.getCell(currentRow, 1).value = 'TỔNG THU';
+  worksheet.mergeCells(currentRow, 1, currentRow, 4);
+  worksheet.getCell(currentRow, 1).style = totalStyle;
+  worksheet.getCell(currentRow, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF90EE90' } };
+  worksheet.getCell(currentRow, 5).value = totalIncome;
+  worksheet.getCell(currentRow, 5).style = totalStyle;
+  worksheet.getCell(currentRow, 5).numFmt = '#,##0';
+  worksheet.getCell(currentRow, 5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF90EE90' } };
+  currentRow++;
+
+  worksheet.getCell(currentRow, 1).value = 'TỔNG CHI';
+  worksheet.mergeCells(currentRow, 1, currentRow, 4);
+  worksheet.getCell(currentRow, 1).style = totalStyle;
+  worksheet.getCell(currentRow, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFA07A' } };
+  worksheet.getCell(currentRow, 5).value = totalExpense;
+  worksheet.getCell(currentRow, 5).style = totalStyle;
+  worksheet.getCell(currentRow, 5).numFmt = '#,##0';
+  worksheet.getCell(currentRow, 5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFA07A' } };
+  currentRow++;
+
+  worksheet.getCell(currentRow, 1).value = 'DÒNG TIỀN RÒNG';
+  worksheet.mergeCells(currentRow, 1, currentRow, 4);
+  worksheet.getCell(currentRow, 1).style = totalStyle;
+  worksheet.getCell(currentRow, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD966' } };
+  worksheet.getCell(currentRow, 5).value = totalIncome - totalExpense;
+  worksheet.getCell(currentRow, 5).style = totalStyle;
+  worksheet.getCell(currentRow, 5).numFmt = '#,##0';
+  worksheet.getCell(currentRow, 5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD966' } };
+
+  // Điều chỉnh độ rộng cột
+  worksheet.columns = [
+    { width: 6 },
+    { width: 12 },
+    { width: 8 },
+    { width: 20 },
+    { width: 15 },
+    { width: 40 },
+    { width: 14 },
+    { width: 16 }
+  ];
+
+  return workbook.xlsx.writeBuffer();
+}
+
 // Export báo cáo chi phí vận hành
 async function exportExpenseReport(db, filters = {}) {
   const workbook = new ExcelJS.Workbook();
@@ -353,54 +461,114 @@ async function exportExpenseReport(db, filters = {}) {
     cell.style = headerStyle;
   });
 
-  // Lấy dữ liệu
+  const normalizeMonthToDate = (value, isEnd) => {
+    if (!value) return null;
+    const str = String(value);
+    if (/^\d{4}-\d{2}$/.test(str)) {
+      if (!isEnd) return `${str}-01`;
+      const [y, m] = str.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      return `${str}-${String(lastDay).padStart(2, '0')}`;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    return str;
+  };
+
+  const fromDate = normalizeMonthToDate(filters.from, false);
+  const toDate = normalizeMonthToDate(filters.to, true);
+  const salaryFrom = filters.from ? String(filters.from).substring(0, 7) : null;
+  const salaryTo = filters.to ? String(filters.to).substring(0, 7) : null;
+
+  const buildRange = (columnName, params) => {
+    const clauses = [];
+    if (fromDate) {
+      clauses.push(`${columnName} >= ?`);
+      params.push(fromDate);
+    }
+    if (toDate) {
+      clauses.push(`${columnName} <= ?`);
+      params.push(toDate);
+    }
+    return clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
+  };
+
+  const fuelParams = [];
+  const maintenanceParams = [];
+  const feeParams = [];
+  const salaryParams = [];
+
+  const fuelSubquery = `
+    SELECT vehicle_id, COALESCE(SUM(total_cost), 0) AS fuel_cost
+    FROM fuel_records
+    WHERE fuel_date IS NOT NULL
+    ${buildRange('fuel_date', fuelParams)}
+    GROUP BY vehicle_id
+  `;
+
+  const maintenanceSubquery = `
+    SELECT vehicle_id, COALESCE(SUM(cost), 0) AS maintenance_cost
+    FROM vehicle_maintenance
+    WHERE maintenance_date IS NOT NULL
+    ${buildRange('maintenance_date', maintenanceParams)}
+    GROUP BY vehicle_id
+  `;
+
+  const feeDateExpr = `COALESCE(paid_date, substr(created_at, 1, 10))`;
+  const feeSubquery = `
+    SELECT vehicle_id, COALESCE(SUM(amount), 0) AS fee_cost
+    FROM vehicle_fees
+    WHERE ${feeDateExpr} IS NOT NULL
+    ${buildRange(feeDateExpr, feeParams)}
+    GROUP BY vehicle_id
+  `;
+
+  const salaryRange = [];
+  if (salaryFrom) {
+    salaryRange.push('ds.salary_month >= ?');
+    salaryParams.push(salaryFrom);
+  }
+  if (salaryTo) {
+    salaryRange.push('ds.salary_month <= ?');
+    salaryParams.push(salaryTo);
+  }
+
+  const salarySubquery = `
+    SELECT o.vehicle_id, COALESCE(SUM(ds.total_salary), 0) AS salary_cost
+    FROM driver_salaries ds
+    JOIN (
+      SELECT DISTINCT vehicle_id, driver_id
+      FROM orders
+      WHERE vehicle_id IS NOT NULL AND driver_id IS NOT NULL
+    ) o ON o.driver_id = ds.driver_id
+    WHERE 1=1 ${salaryRange.length ? ` AND ${salaryRange.join(' AND ')}` : ''}
+    GROUP BY o.vehicle_id
+  `;
+
   let query = `
-    SELECT 
+    SELECT
       v.id as vehicle_id,
       v.plate_number,
-      COALESCE(SUM(fr.total_cost), 0) as fuel_cost,
-      COALESCE(SUM(vm.cost), 0) as maintenance_cost,
-      COALESCE(SUM(vf.amount), 0) as fee_cost,
-      COALESCE(SUM(ds.total_salary), 0) as salary_cost,
-      (COALESCE(SUM(fr.total_cost), 0) + COALESCE(SUM(vm.cost), 0) + 
-       COALESCE(SUM(vf.amount), 0) + COALESCE(SUM(ds.total_salary), 0)) as total_expenses
+      COALESCE(fr.fuel_cost, 0) as fuel_cost,
+      COALESCE(vm.maintenance_cost, 0) as maintenance_cost,
+      COALESCE(vf.fee_cost, 0) as fee_cost,
+      COALESCE(ds.salary_cost, 0) as salary_cost,
+      (COALESCE(fr.fuel_cost, 0) + COALESCE(vm.maintenance_cost, 0) +
+       COALESCE(vf.fee_cost, 0) + COALESCE(ds.salary_cost, 0)) as total_expenses
     FROM vehicles v
-    LEFT JOIN fuel_records fr ON v.id = fr.vehicle_id
-    LEFT JOIN vehicle_maintenance vm ON v.id = vm.vehicle_id
-    LEFT JOIN vehicle_fees vf ON v.id = vf.vehicle_id
-    LEFT JOIN driver_salaries ds ON ds.driver_id IN (
-      SELECT DISTINCT driver_id 
-      FROM orders 
-      WHERE vehicle_id = v.id
-    )
+    LEFT JOIN (${fuelSubquery}) fr ON v.id = fr.vehicle_id
+    LEFT JOIN (${maintenanceSubquery}) vm ON v.id = vm.vehicle_id
+    LEFT JOIN (${feeSubquery}) vf ON v.id = vf.vehicle_id
+    LEFT JOIN (${salarySubquery}) ds ON v.id = ds.vehicle_id
     WHERE 1=1
   `;
-  const params = [];
 
+  const params = [...fuelParams, ...maintenanceParams, ...feeParams, ...salaryParams];
   if (filters.vehicle_id) {
     query += ' AND v.id = ?';
     params.push(filters.vehicle_id);
   }
-  if (filters.from) {
-    query += ` AND (
-      (fr.fuel_date >= ? OR fr.fuel_date IS NULL) AND
-      (vm.maintenance_date >= ? OR vm.maintenance_date IS NULL) AND
-      (vf.fee_date >= ? OR vf.fee_date IS NULL) AND
-      (ds.salary_month >= ? OR ds.salary_month IS NULL)
-    )`;
-    params.push(filters.from, filters.from, filters.from, filters.from);
-  }
-  if (filters.to) {
-    query += ` AND (
-      (fr.fuel_date <= ? OR fr.fuel_date IS NULL) AND
-      (vm.maintenance_date <= ? OR vm.maintenance_date IS NULL) AND
-      (vf.fee_date <= ? OR vf.fee_date IS NULL) AND
-      (ds.salary_month <= ? OR ds.salary_month IS NULL)
-    )`;
-    params.push(filters.to, filters.to, filters.to, filters.to);
-  }
 
-  query += ' GROUP BY v.id, v.plate_number ORDER BY total_expenses DESC';
+  query += ' ORDER BY total_expenses DESC';
 
   return new Promise((resolve, reject) => {
     db.all(query, params, async (err, records) => {
@@ -473,8 +641,227 @@ async function exportExpenseReport(db, filters = {}) {
   });
 }
 
+// Export báo giá
+async function exportQuoteReport(db, quoteId, options = {}) {
+  const companyName = options.company_name || 'CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH';
+  const directorName = options.director_name || 'TRẦN NGỌC TIÊN';
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Báo Giá');
+
+  const quote = await new Promise((resolve, reject) => {
+    const query = `
+      SELECT q.*, c.name as customer_name, c.contact_person, c.phone as customer_phone
+      FROM quotes q
+      LEFT JOIN customers c ON q.customer_id = c.id
+      WHERE q.id = ?
+    `;
+    db.get(query, [quoteId], (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+
+  if (!quote) {
+    const err = new Error('Không tìm thấy báo giá');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  worksheet.pageSetup = {
+    paperSize: 9,
+    orientation: 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 }
+  };
+  worksheet.views = [{ showGridLines: false }];
+
+  worksheet.columns = [
+    { width: 42 },
+    { width: 12 },
+    { width: 16 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 }
+  ];
+
+  const thinBorder = {
+    top: { style: 'thin' },
+    left: { style: 'thin' },
+    bottom: { style: 'thin' },
+    right: { style: 'thin' }
+  };
+  const applyBorderRange = (row, fromCol, toCol) => {
+    for (let c = fromCol; c <= toCol; c++) {
+      worksheet.getCell(row, c).border = thinBorder;
+      worksheet.getCell(row, c).alignment = {
+        ...(worksheet.getCell(row, c).alignment || {}),
+        vertical: 'middle',
+        wrapText: true
+      };
+    }
+  };
+  const applyBorderRect = (fromRow, toRow, fromCol, toCol) => {
+    for (let rr = fromRow; rr <= toRow; rr++) {
+      applyBorderRange(rr, fromCol, toCol);
+    }
+  };
+
+  // Header
+  worksheet.mergeCells('A1:F1');
+  worksheet.getCell('A1').value = companyName;
+  worksheet.getCell('A1').style = {
+    font: { bold: true, size: 14, color: { argb: 'FF4472C4' } },
+    alignment: { vertical: 'middle', horizontal: 'center', wrapText: true }
+  };
+  worksheet.getRow(1).height = 22;
+
+  worksheet.mergeCells('A2:F2');
+  worksheet.getCell('A2').value = 'BÁO GIÁ DỊCH VỤ VẬN CHUYỂN';
+  worksheet.getCell('A2').style = titleStyle;
+  worksheet.getRow(2).height = 20;
+
+  let r = 4;
+  const setKV = (row, label1, value1, label2, value2) => {
+    worksheet.mergeCells(row, 2, row, 3);
+    worksheet.mergeCells(row, 5, row, 6);
+
+    worksheet.getCell(row, 1).value = label1;
+    worksheet.getCell(row, 1).font = { bold: true };
+    worksheet.getCell(row, 1).alignment = { vertical: 'middle', horizontal: 'left' };
+
+    worksheet.getCell(row, 2).value = value1 ?? '';
+    worksheet.getCell(row, 2).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+
+    worksheet.getCell(row, 4).value = label2;
+    worksheet.getCell(row, 4).font = { bold: true };
+    worksheet.getCell(row, 4).alignment = { vertical: 'middle', horizontal: 'left' };
+
+    worksheet.getCell(row, 5).value = value2 ?? '';
+    worksheet.getCell(row, 5).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+
+    worksheet.getRow(row).height = 18;
+    applyBorderRange(row, 1, 6);
+  };
+
+  setKV(r++, 'Số báo giá:', quote.quote_number, 'Ngày:', formatDate(quote.quote_date));
+  setKV(r++, 'Khách hàng:', quote.customer_name || '', 'Hiệu lực:', quote.valid_until ? formatDate(quote.valid_until) : 'Không giới hạn');
+  setKV(r++, 'Người liên hệ:', quote.contact_person || '', 'Điện thoại:', quote.customer_phone || '');
+
+  r++;
+
+  // Transport info
+  worksheet.mergeCells(`A${r}:F${r}`);
+  worksheet.getCell(`A${r}`).value = 'THÔNG TIN VẬN CHUYỂN';
+  worksheet.getCell(`A${r}`).style = {
+    font: { bold: true, size: 12 },
+    alignment: { vertical: 'middle', horizontal: 'left' }
+  };
+  worksheet.getRow(r).height = 20;
+  applyBorderRange(r, 1, 6);
+  r++;
+
+  setKV(r++, 'Điểm đi:', quote.route_from || '', 'Điểm đến:', quote.route_to || '');
+  setKV(r++, 'Loại container:', quote.container_type || '', 'Hàng hóa:', quote.cargo_description || '');
+  r++;
+
+  // Item table
+  const headerRow = r;
+  const headers = ['Mô tả', 'Số lượng', 'Đơn giá', 'Thành tiền'];
+  headers.forEach((h, i) => {
+    const cell = worksheet.getCell(headerRow, i + 1);
+    cell.value = h;
+    cell.style = headerStyle;
+  });
+  worksheet.getRow(headerRow).height = 20;
+  applyBorderRange(headerRow, 1, 4);
+  r++;
+
+  worksheet.getCell(r, 1).value = `Vận chuyển ${quote.route_from || ''} - ${quote.route_to || ''}`;
+  worksheet.getCell(r, 2).value = Number(quote.quantity || 1);
+  worksheet.getCell(r, 3).value = Number(quote.unit_price || 0);
+  worksheet.getCell(r, 4).value = Number(quote.total_amount || 0);
+  worksheet.getCell(r, 2).numFmt = '#,##0.00';
+  worksheet.getCell(r, 3).numFmt = '#,##0';
+  worksheet.getCell(r, 4).numFmt = '#,##0';
+  worksheet.getCell(r, 1).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+  worksheet.getCell(r, 2).alignment = { vertical: 'middle', horizontal: 'center' };
+  worksheet.getCell(r, 3).alignment = { vertical: 'middle', horizontal: 'right' };
+  worksheet.getCell(r, 4).alignment = { vertical: 'middle', horizontal: 'right' };
+  worksheet.getRow(r).height = 18;
+  applyBorderRange(r, 1, 4);
+  r += 2;
+
+  // Totals
+  const setTotalLine = (label, value, isStrong) => {
+    worksheet.mergeCells(r, 1, r, 3);
+    worksheet.getCell(r, 1).value = label;
+    worksheet.getCell(r, 1).alignment = { horizontal: 'right' };
+    worksheet.getCell(r, 1).font = { bold: !!isStrong };
+    worksheet.getCell(r, 4).value = Number(value || 0);
+    worksheet.getCell(r, 4).numFmt = '#,##0';
+    worksheet.getCell(r, 4).font = { bold: !!isStrong, color: isStrong ? { argb: 'FF4472C4' } : undefined };
+    worksheet.getCell(r, 4).alignment = { horizontal: 'right' };
+    worksheet.getRow(r).height = 18;
+    applyBorderRange(r, 1, 4);
+    r++;
+  };
+
+  setTotalLine('Tổng cộng:', quote.total_amount || 0, false);
+  if (Number(quote.discount_amount || 0) > 0) {
+    setTotalLine('Giảm giá:', -(Number(quote.discount_amount || 0)), false);
+  }
+  setTotalLine('Thuế VAT:', quote.tax_amount || 0, false);
+  setTotalLine('Tổng thanh toán:', quote.final_amount || 0, true);
+
+  // Enclose the main form area (info + transport + items + totals)
+  applyBorderRect(4, r - 1, 1, 6);
+
+  if (quote.notes) {
+    r++;
+    worksheet.mergeCells(`A${r}:F${r}`);
+    worksheet.getCell(`A${r}`).value = `Ghi chú: ${quote.notes}`;
+    worksheet.getCell(`A${r}`).alignment = { wrapText: true };
+    worksheet.getRow(r).height = 36;
+    applyBorderRange(r, 1, 6);
+    r++;
+  }
+
+  // Signature (bottom-right)
+  r += 2;
+  worksheet.mergeCells(`E${r}:F${r}`);
+  worksheet.getCell(`E${r}`).value = companyName;
+  worksheet.getCell(`E${r}`).alignment = { horizontal: 'center' };
+  worksheet.getCell(`E${r}`).font = { bold: true };
+  r++;
+
+  worksheet.mergeCells(`E${r}:F${r}`);
+  worksheet.getCell(`E${r}`).value = 'GIÁM ĐỐC';
+  worksheet.getCell(`E${r}`).alignment = { horizontal: 'center' };
+  worksheet.getCell(`E${r}`).font = { bold: true };
+  r++;
+
+  worksheet.mergeCells(`E${r}:F${r}`);
+  worksheet.getCell(`E${r}`).value = '(Ký, đóng dấu)';
+  worksheet.getCell(`E${r}`).alignment = { horizontal: 'center' };
+  worksheet.getCell(`E${r}`).font = { italic: true, size: 10 };
+  r += 4;
+
+  worksheet.mergeCells(`E${r}:F${r}`);
+  worksheet.getCell(`E${r}`).value = directorName;
+  worksheet.getCell(`E${r}`).alignment = { horizontal: 'center' };
+  worksheet.getCell(`E${r}`).font = { bold: true };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return buffer;
+}
+
 module.exports = {
   exportFuelReport,
   exportCashFlowReport,
-  exportExpenseReport
+  exportCashFlowConsolidatedReport,
+  exportExpenseReport,
+  exportQuoteReport
 };

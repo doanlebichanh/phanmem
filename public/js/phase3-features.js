@@ -562,6 +562,15 @@ window.createQuoteForCustomer = function(customerId) {
 
 window.viewQuote = async function(quoteId) {
   const quote = await apiCall(`/quotes/${quoteId}`);
+
+  const getCompanyInfo = () => {
+    return {
+      companyName: localStorage.getItem('company_name') || 'CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH',
+      directorName: localStorage.getItem('director_name') || 'TRẦN NGỌC TIÊN'
+    };
+  };
+
+  const { companyName, directorName } = getCompanyInfo();
   
   const modal = `
     <div class="modal-overlay" onclick="closeModal(event)">
@@ -572,7 +581,7 @@ window.viewQuote = async function(quoteId) {
         </div>
         <div class="modal-body">
           <div style="background: white; padding: 30px; border-radius: 8px;">
-            <h3 style="text-align: center; color: #667eea; margin-bottom: 20px;">CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH</h3>
+            <h3 style="text-align: center; color: #667eea; margin-bottom: 20px;">${companyName}</h3>
             <h4 style="text-align: center; margin-bottom: 30px;">BÁO GIÁ DỊCH VỤ VẬN CHUYỂN</h4>
             
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
@@ -626,6 +635,16 @@ window.viewQuote = async function(quoteId) {
               <strong>Ghi chú:</strong> ${quote.notes}
             </div>` : ''}
 
+            <div style="display: flex; justify-content: flex-end; margin-top: 30px;">
+              <div style="min-width: 260px; text-align: center;">
+                <p style="margin: 0 0 6px 0;"><strong>${companyName}</strong></p>
+                <p style="margin: 0 0 6px 0;"><strong>GIÁM ĐỐC</strong></p>
+                <p style="margin: 0; font-style: italic; font-size: 12px;">(Ký, đóng dấu)</p>
+                <div style="height: 60px;"></div>
+                <p style="margin: 0;"><strong>${directorName}</strong></p>
+              </div>
+            </div>
+
             <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center;">
               <p style="font-style: italic;">Trân trọng cảm ơn!</p>
             </div>
@@ -633,6 +652,9 @@ window.viewQuote = async function(quoteId) {
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
+          <button class="btn btn-success" onclick="exportQuoteExcel(${quote.id})">📥 Excel</button>
+          <button class="btn btn-info" onclick="exportQuotePdf(${quote.id})">📄 PDF</button>
+          <button class="btn btn-secondary" onclick="printQuote(${quote.id})">🖨️ In</button>
           ${quote.status === 'draft' ? `
             <button class="btn btn-info" onclick="closeModal(); showQuoteModal(${quote.id})">Sửa</button>
             <button class="btn btn-success" onclick="approveQuote(${quote.id})">Duyệt & Gửi</button>
@@ -642,6 +664,162 @@ window.viewQuote = async function(quoteId) {
     </div>
   `;
   document.getElementById('modalContainer').innerHTML = modal;
+};
+
+function buildQuotePrintableHtml(quote) {
+  const companyName = localStorage.getItem('company_name') || 'CÔNG TY TNHH MTV TMDV VẬN TẢI NGỌC ANH';
+  const directorName = localStorage.getItem('director_name') || 'TRẦN NGỌC TIÊN';
+
+  return `
+  <!doctype html>
+  <html lang="vi">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Báo giá ${quote.quote_number}</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 24px; color: #111; }
+        .doc { max-width: 900px; margin: 0 auto; }
+        .center { text-align: center; }
+        h1,h2,h3,h4 { margin: 0; }
+        .muted { color: #555; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+        .box { background: #f5f7fa; padding: 12px 14px; border-radius: 8px; margin-top: 16px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th { background: #667eea; color: #fff; padding: 10px; text-align: left; }
+        td { padding: 10px; border-bottom: 1px solid #ddd; }
+        .right { text-align: right; }
+        .signature-wrap { display: flex; justify-content: flex-end; margin-top: 28px; }
+        .signature { min-width: 260px; text-align: center; }
+        .signature .spacer { height: 70px; }
+        @media print {
+          body { padding: 0; }
+          .doc { max-width: none; margin: 0; padding: 0; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="doc">
+        <div class="center">
+          <h3 style="color:#667eea;">${companyName}</h3>
+          <h4 style="margin-top:10px;">BÁO GIÁ DỊCH VỤ VẬN CHUYỂN</h4>
+        </div>
+
+        <div class="grid">
+          <div>
+            <p><strong>Số báo giá:</strong> ${quote.quote_number}</p>
+            <p><strong>Ngày:</strong> ${formatDate(quote.quote_date)}</p>
+            <p><strong>Hiệu lực đến:</strong> ${quote.valid_until ? formatDate(quote.valid_until) : 'Không giới hạn'}</p>
+          </div>
+          <div>
+            <p><strong>Khách hàng:</strong> ${quote.customer_name || quote.name || '-'}</p>
+            <p><strong>Người liên hệ:</strong> ${quote.contact_person || '-'}</p>
+            <p><strong>Điện thoại:</strong> ${quote.customer_phone || '-'}</p>
+          </div>
+        </div>
+
+        <div class="box">
+          <h4 style="margin-bottom: 8px;">Thông tin vận chuyển:</h4>
+          <p><strong>Điểm đi:</strong> ${quote.route_from || '-'}</p>
+          <p><strong>Điểm đến:</strong> ${quote.route_to || '-'}</p>
+          <p><strong>Loại container:</strong> ${quote.container_type || '-'}</p>
+          <p><strong>Hàng hóa:</strong> ${quote.cargo_description || '-'}</p>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Mô tả</th>
+              <th style="text-align:center;">Số lượng</th>
+              <th style="text-align:right;">Đơn giá</th>
+              <th style="text-align:right;">Thành tiền</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Vận chuyển ${quote.route_from || ''} - ${quote.route_to || ''}</td>
+              <td style="text-align:center;">${quote.quantity || 1}</td>
+              <td class="right">${formatCurrency(quote.unit_price || 0)}</td>
+              <td class="right">${formatCurrency(quote.total_amount || 0)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="right" style="margin-top: 14px;">
+          <p>Tổng cộng: ${formatCurrency(quote.total_amount || 0)}</p>
+          ${(quote.discount_amount || 0) > 0 ? `<p>Giảm giá: -${formatCurrency(quote.discount_amount || 0)}</p>` : ''}
+          <p>Thuế VAT: ${formatCurrency(quote.tax_amount || 0)}</p>
+          <h3 style="color:#667eea; margin-top: 8px;">Tổng thanh toán: ${formatCurrency(quote.final_amount || 0)}</h3>
+        </div>
+
+        ${quote.notes ? `<div class="box" style="background:#fff3cd;"><strong>Ghi chú:</strong> ${quote.notes}</div>` : ''}
+
+        <div class="signature-wrap">
+          <div class="signature">
+            <p style="margin: 0 0 6px 0;"><strong>${companyName}</strong></p>
+            <p style="margin: 0 0 6px 0;"><strong>GIÁM ĐỐC</strong></p>
+            <p style="margin: 0; font-style: italic; font-size: 12px;">(Ký, đóng dấu)</p>
+            <div class="spacer"></div>
+            <p style="margin: 0;"><strong>${directorName}</strong></p>
+          </div>
+        </div>
+      </div>
+    </body>
+  </html>`;
+}
+
+window.printQuote = async function(quoteId) {
+  const quote = await apiCall(`/quotes/${quoteId}`);
+  const html = buildQuotePrintableHtml(quote);
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert('Trình duyệt chặn popup. Vui lòng cho phép popup để in.');
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
+};
+
+window.exportQuotePdf = async function(quoteId) {
+  // In ra và chọn "Save as PDF" trong hộp thoại in
+  await window.printQuote(quoteId);
+};
+
+window.exportQuoteExcel = async function(quoteId) {
+  try {
+    const companyName = localStorage.getItem('company_name') || '';
+    const directorName = localStorage.getItem('director_name') || '';
+    const qs = new URLSearchParams();
+    if (companyName) qs.set('company_name', companyName);
+    if (directorName) qs.set('director_name', directorName);
+    const url = `/export/quotes/${quoteId}/excel${qs.toString() ? `?${qs.toString()}` : ''}`;
+    const response = await fetch(`${API_URL}${url}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Lỗi tải báo cáo');
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `BaoGia_${quoteId}_${Date.now()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    console.error('Export error:', error);
+    alert('Lỗi xuất Excel: ' + error.message);
+  }
 };
 
 window.approveQuote = async function(quoteId) {

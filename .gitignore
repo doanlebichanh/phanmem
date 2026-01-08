@@ -52,6 +52,10 @@ quick-test.html
 *~
 *.cache
 
+# Generated exports
+*.xlsx
+*.pdf
+
 # Documentation (internal)
 CHANGES_SUMMARY.md
 FIX_LOG_LUONG.md

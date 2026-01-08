@@ -596,29 +596,42 @@ async function loadCashFlow() {
     // Biểu đồ đơn giản (text based)
     const chartContent = document.getElementById('cashflow-chart');
     const dailyStats = {};
-    records.forEach(r => {
-      const date = r.transaction_date;
+    const chartRecords = filteredRecords;
+    chartRecords.forEach(r => {
+      const date = (r.transaction_date || '').toString().substring(0, 10);
+      if (!date) return;
       if (!dailyStats[date]) {
         dailyStats[date] = { income: 0, expense: 0 };
       }
+      const amt = Number(r.amount || 0);
       if (r.type === 'income') {
-        dailyStats[date].income += r.amount;
+        dailyStats[date].income += amt;
       } else {
-        dailyStats[date].expense += r.amount;
+        dailyStats[date].expense += amt;
       }
     });
+
+    const dates = Object.keys(dailyStats).sort();
+    const maxDaily = dates.reduce((max, d) => Math.max(max, dailyStats[d].income, dailyStats[d].expense), 0) || 1;
+    const pct = (value) => {
+      const v = Number(value || 0);
+      return Math.max(0, Math.min(100, (v / maxDaily) * 100));
+    };
 
     chartContent.innerHTML = `
       <div class="chart-container">
         <h3>Biểu đồ thu chi theo ngày</h3>
-        ${Object.keys(dailyStats).sort().map(date => `
+        <div class="alert alert-info" style="margin-bottom: 12px;">
+          <strong>ℹ️</strong> Cột được chuẩn hoá theo ngày có giá trị lớn nhất trong khoảng lọc.
+        </div>
+        ${dates.map(date => `
           <div class="bar-chart-row">
             <span class="bar-label">${formatDate(date)}</span>
             <div class="bar-group">
-              <div class="bar bar-income" style="width: ${(dailyStats[date].income / Math.max(totalIncome, totalExpense)) * 100}%">
+              <div class="bar bar-income" style="width: ${pct(dailyStats[date].income)}%">
                 ${formatCurrency(dailyStats[date].income)}
               </div>
-              <div class="bar bar-expense" style="width: ${(dailyStats[date].expense / Math.max(totalIncome, totalExpense)) * 100}%">
+              <div class="bar bar-expense" style="width: ${pct(dailyStats[date].expense)}%">
                 ${formatCurrency(dailyStats[date].expense)}
               </div>
             </div>

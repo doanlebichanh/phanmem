@@ -386,7 +386,11 @@ function initDatabase() {
           vehicle_id INTEGER,
           maintenance_date DATE,
           maintenance_type TEXT,
+          odometer_reading INTEGER,
           cost REAL,
+          next_due_odometer INTEGER,
+          garage TEXT,
+          invoice_number TEXT,
           description TEXT,
           next_due_date DATE,
           notes TEXT,
@@ -478,6 +482,14 @@ function initDatabase() {
         await ensureColumn('driver_advances', 'salary_id', 'INTEGER');
         await ensureColumn('fuel_records', 'fuel_type', 'TEXT');
         await ensureColumn('fuel_records', 'odometer_reading', 'INTEGER');
+
+        // Vehicle maintenance: align with /api/maintenance fields
+        await ensureColumn('vehicle_maintenance', 'odometer_reading', 'INTEGER');
+        await ensureColumn('vehicle_maintenance', 'next_due_odometer', 'INTEGER');
+        await ensureColumn('vehicle_maintenance', 'garage', 'TEXT');
+        await ensureColumn('vehicle_maintenance', 'invoice_number', 'TEXT');
+        await ensureColumn('vehicle_maintenance', 'notes', 'TEXT');
+        await ensureColumn('vehicle_maintenance', 'created_by', 'INTEGER');
         await ensureColumn('fuel_records', 'station_name', 'TEXT');
         await ensureColumn('fuel_records', 'receipt_number', 'TEXT');
         await ensureColumn('vehicle_fees', 'paid_date', 'DATE');

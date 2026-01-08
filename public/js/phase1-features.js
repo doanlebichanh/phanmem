@@ -1183,6 +1183,7 @@ async function loadMaintenance() {
               <td>${r.garage || '-'}</td>
               <td>${r.next_due_date ? formatDate(r.next_due_date) : '-'}${r.next_due_odometer ? '<br>' + formatNumber(r.next_due_odometer) + ' km' : ''}</td>
               <td class="actions">
+                <button class="btn btn-sm btn-info" onclick="viewMaintenanceDetail(${r.id})">Xem</button>
                 <button class="btn btn-sm btn-primary" onclick="editMaintenance(${r.id})">Sửa</button>
                 ${currentUser.role === 'admin' ? `
                   <button class="btn btn-sm btn-danger" onclick="deleteMaintenance(${r.id})">Xóa</button>
@@ -1220,8 +1221,7 @@ window.showMaintenanceModal = async function(maintenanceId = null) {
     let maintenance = null;
     
     if (maintenanceId) {
-      const allMaintenance = await apiCall('/maintenance');
-      maintenance = allMaintenance.find(m => m.id === maintenanceId);
+      maintenance = await apiCall(`/maintenance/${maintenanceId}`);
     }
 
     const modal = `
@@ -1302,6 +1302,11 @@ window.showMaintenanceModal = async function(maintenanceId = null) {
               <label>📝 Mô tả công việc</label>
               <textarea id="maintenanceDescription" rows="3" placeholder="Ghi chú chi tiết về công việc bảo dưỡng">${maintenance?.description || ''}</textarea>
             </div>
+
+            <div class="form-group">
+              <label>🗒️ Ghi chú</label>
+              <textarea id="maintenanceNotes" rows="2" placeholder="Ghi chú thêm (nếu có)">${maintenance?.notes || ''}</textarea>
+            </div>
           </form>
           <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeModal()">Hủy</button>
@@ -1330,7 +1335,8 @@ window.saveMaintenance = async function(event, maintenanceId) {
       next_due_odometer: document.getElementById('maintenanceNextOdometer').value || null,
       garage: document.getElementById('maintenanceGarage').value,
       invoice_number: document.getElementById('maintenanceInvoice').value,
-      description: document.getElementById('maintenanceDescription').value
+      description: document.getElementById('maintenanceDescription').value,
+      notes: document.getElementById('maintenanceNotes').value
     };
 
     if (maintenanceId) {
@@ -1349,6 +1355,55 @@ window.saveMaintenance = async function(event, maintenanceId) {
     closeModal();
     await loadMaintenance();
     await loadMaintenanceAlerts();
+  } catch (error) {
+    alert('Lỗi: ' + error.message);
+  }
+};
+
+window.viewMaintenanceDetail = async function(id) {
+  try {
+    const m = await apiCall(`/maintenance/${id}`);
+    const modal = `
+      <div class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()" style="max-width: 720px;">
+          <div class="modal-header">
+            <h2>🔍 Chi tiết bảo dưỡng</h2>
+            <button class="modal-close" onclick="closeModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-row">
+              <div>
+                <p><strong>Xe:</strong> ${m.plate_number || '-'}</p>
+                <p><strong>Loại:</strong> ${getMaintenanceTypeName(m.maintenance_type)}</p>
+                <p><strong>Ngày:</strong> ${formatDate(m.maintenance_date)}</p>
+                <p><strong>Số km:</strong> ${m.odometer_reading ? formatNumber(m.odometer_reading) + ' km' : '-'}</p>
+              </div>
+              <div>
+                <p><strong>Chi phí:</strong> ${formatCurrency(m.cost || 0)}</p>
+                <p><strong>Garage:</strong> ${m.garage || '-'}</p>
+                <p><strong>Số hóa đơn:</strong> ${m.invoice_number || '-'}</p>
+                <p><strong>Người tạo:</strong> ${m.created_by_name || '-'}</p>
+              </div>
+            </div>
+
+            <hr>
+
+            <p><strong>Bảo dưỡng tiếp theo:</strong>
+              ${m.next_due_date ? formatDate(m.next_due_date) : '-'}
+              ${m.next_due_odometer ? ` / ${formatNumber(m.next_due_odometer)} km` : ''}
+            </p>
+
+            ${m.description ? `<div class="alert alert-info"><strong>Mô tả:</strong><br>${m.description}</div>` : ''}
+            ${m.notes ? `<div class="alert alert-warning"><strong>Ghi chú:</strong><br>${m.notes}</div>` : ''}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">Đóng</button>
+            <button class="btn btn-primary" onclick="closeModal(); editMaintenance(${id});">Sửa</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('modalContainer').innerHTML = modal;
   } catch (error) {
     alert('Lỗi: ' + error.message);
   }

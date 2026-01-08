@@ -1733,36 +1733,99 @@ app.delete('/api/containers/:id', authenticateToken, requireRole('admin'), async
 // Báo cáo tổng quan
 app.get('/api/reports/overview', authenticateToken, async (req, res) => {
   try {
-    const { from_date, to_date } = req.query;
-    
-    let dateFilter = '';
-    let params = [];
-    if (from_date && to_date) {
-      dateFilter = 'WHERE order_date BETWEEN ? AND ?';
-      params = [from_date, to_date];
-    }
+    const { from_date, to_date, from, to } = req.query;
 
-    const totalOrders = await dbGet(`SELECT COUNT(*) as count FROM orders ${dateFilter}`, params);
-    const totalRevenue = await dbGet(`SELECT SUM(price) as total FROM orders ${dateFilter}`, params);
-    const totalCosts = await dbGet(`
-      SELECT SUM(tc.amount) as total 
-      FROM trip_costs tc
-      JOIN orders o ON tc.order_id = o.id
-      ${dateFilter}
-    `, params);
-    const totalPayments = await dbGet(`
-      SELECT SUM(p.amount) as total 
-      FROM payments p
-      JOIN orders o ON p.order_id = o.id
-      ${dateFilter}
-    `, params);
+    const fromDate = from_date || from || null;
+    const toDate = to_date || to || null;
+
+    const buildDateRange = (columnName, params) => {
+      const clauses = [];
+      if (fromDate) {
+        clauses.push(`${columnName} >= ?`);
+        params.push(fromDate);
+      }
+      if (toDate) {
+        clauses.push(`${columnName} <= ?`);
+        params.push(toDate);
+      }
+      return clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
+    };
+
+    // Orders (revenue) filter uses order_date
+    const orderParams = [];
+    const orderFilter = fromDate || toDate ? `WHERE 1=1${buildDateRange('o.order_date', orderParams)}` : '';
+
+    const totalOrders = await dbGet(
+      `SELECT COUNT(*) as count FROM orders o ${orderFilter}`,
+      orderParams
+    );
+
+    const totalRevenue = await dbGet(
+      `SELECT SUM(COALESCE(o.final_amount, o.price, 0)) as total FROM orders o ${orderFilter}`,
+      orderParams
+    );
+
+    // Operational costs are not only trip_costs. Sum across key expense sources by their own dates.
+    const tripCostParams = [];
+    const tripCostFilter = `WHERE 1=1${buildDateRange('tc.cost_date', tripCostParams)}`;
+    const tripCosts = await dbGet(
+      `SELECT SUM(COALESCE(tc.amount, 0)) as total FROM trip_costs tc ${tripCostFilter}`,
+      tripCostParams
+    );
+
+    const fuelParams = [];
+    const fuelFilter = `WHERE 1=1${buildDateRange('fr.fuel_date', fuelParams)}`;
+    const fuelCosts = await dbGet(
+      `SELECT SUM(COALESCE(fr.total_cost, 0)) as total FROM fuel_records fr ${fuelFilter}`,
+      fuelParams
+    );
+
+    const maintenanceParams = [];
+    const maintenanceFilter = `WHERE 1=1${buildDateRange('m.maintenance_date', maintenanceParams)}`;
+    const maintenanceCosts = await dbGet(
+      `SELECT SUM(COALESCE(m.cost, 0)) as total FROM vehicle_maintenance m ${maintenanceFilter}`,
+      maintenanceParams
+    );
+
+    const feeParams = [];
+    const feeDateExpr = `COALESCE(f.paid_date, substr(f.created_at, 1, 10))`;
+    const feeFilter = `WHERE 1=1${buildDateRange(feeDateExpr, feeParams)}`;
+    const feeCosts = await dbGet(
+      `SELECT SUM(COALESCE(f.amount, 0)) as total FROM vehicle_fees f ${feeFilter}`,
+      feeParams
+    );
+
+    const salaryParams = [];
+    const salaryFilter = `WHERE ds.status = 'paid'${buildDateRange('ds.paid_date', salaryParams)}`;
+    const salaryCosts = await dbGet(
+      `SELECT SUM(COALESCE(ds.total_salary, 0)) as total FROM driver_salaries ds ${salaryFilter}`,
+      salaryParams
+    );
+
+    // Total payments: keep historical behavior (filter by orders' order_date)
+    const totalPayments = await dbGet(
+      `
+        SELECT SUM(COALESCE(p.amount, 0)) as total
+        FROM payments p
+        JOIN orders o ON p.order_id = o.id
+        ${orderFilter}
+      `,
+      orderParams
+    );
+
+    const totalCostsValue =
+      (tripCosts?.total || 0) +
+      (fuelCosts?.total || 0) +
+      (maintenanceCosts?.total || 0) +
+      (feeCosts?.total || 0) +
+      (salaryCosts?.total || 0);
 
     res.json({
-      totalOrders: totalOrders.count || 0,
-      totalRevenue: totalRevenue.total || 0,
-      totalCosts: totalCosts.total || 0,
-      totalPayments: totalPayments.total || 0,
-      profit: (totalRevenue.total || 0) - (totalCosts.total || 0)
+      totalOrders: totalOrders?.count || 0,
+      totalRevenue: totalRevenue?.total || 0,
+      totalCosts: totalCostsValue,
+      totalPayments: totalPayments?.total || 0,
+      profit: (totalRevenue?.total || 0) - totalCostsValue
     });
   } catch (error) {
     console.error('Error fetching overview:', error);
@@ -2370,6 +2433,30 @@ app.get('/api/maintenance', authenticateToken, async (req, res) => {
   }
 });
 
+// Get single maintenance record
+app.get('/api/maintenance/:id', authenticateToken, async (req, res) => {
+  try {
+    const record = await dbGet(
+      `
+        SELECT
+          m.*, v.plate_number, u.fullname as created_by_name
+        FROM vehicle_maintenance m
+        LEFT JOIN vehicles v ON m.vehicle_id = v.id
+        LEFT JOIN users u ON m.created_by = u.id
+        WHERE m.id = ?
+      `,
+      [req.params.id]
+    );
+    if (!record) {
+      return res.status(404).json({ error: 'Không tìm thấy' });
+    }
+    res.json(record);
+  } catch (error) {
+    console.error('Error fetching maintenance detail:', error);
+    res.status(500).json({ error: 'Lỗi lấy chi tiết bảo dưỡng' });
+  }
+});
+
 // Create maintenance record
 app.post('/api/maintenance', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
@@ -2417,6 +2504,7 @@ app.post('/api/maintenance', authenticateToken, requireRole('admin', 'dispatcher
 app.put('/api/maintenance/:id', authenticateToken, requireRole('admin', 'dispatcher'), async (req, res) => {
   try {
     const { 
+      maintenance_type,
       maintenance_date, 
       odometer_reading, 
       cost, 
@@ -2435,9 +2523,18 @@ app.put('/api/maintenance/:id', authenticateToken, requireRole('admin', 'dispatc
     
     await dbRun(`
       UPDATE vehicle_maintenance 
-      SET maintenance_date = ?, odometer_reading = ?, cost = ?, next_due_date = ?, next_due_odometer = ?, garage = ?, invoice_number = ?, description = ?, notes = ?
+      SET maintenance_type = COALESCE(?, maintenance_type),
+          maintenance_date = ?,
+          odometer_reading = ?,
+          cost = ?,
+          next_due_date = ?,
+          next_due_odometer = ?,
+          garage = ?,
+          invoice_number = ?,
+          description = ?,
+          notes = ?
       WHERE id = ?
-    `, [maintenance_date, odometer_reading, cost, next_due_date, next_due_odometer, garage, invoice_number, description, notes, req.params.id]);
+    `, [maintenance_type, maintenance_date, odometer_reading, cost, next_due_date, next_due_odometer, garage, invoice_number, description, notes, req.params.id]);
     
     // Log audit
     logAudit(
@@ -2448,7 +2545,7 @@ app.put('/api/maintenance/:id', authenticateToken, requireRole('admin', 'dispatc
       'maintenance',
       req.params.id,
       oldRecord,
-      { maintenance_date, cost },
+      { maintenance_type, maintenance_date, cost },
       req.ip
     );
     
@@ -2826,208 +2923,211 @@ app.delete('/api/fuel-records/:id', authenticateToken, requireRole('admin', 'acc
 
 // ===== CASH FLOW =====
 
+async function getConsolidatedCashFlow({ from, to }) {
+  const buildDateFilter = (columnName) => {
+    let clause = '';
+    const params = [];
+    if (from) {
+      clause += ` AND ${columnName} >= ?`;
+      params.push(from);
+    }
+    if (to) {
+      clause += ` AND ${columnName} <= ?`;
+      params.push(to);
+    }
+    return { clause, params };
+  };
+
+  const consolidated = [];
+
+  // ========== THU (TIỀN THỰC TẾ NHẬN ĐƯỢC) ==========
+  // 1. Thanh toán từ khách hàng (payments)
+  try {
+    const df = buildDateFilter('p.payment_date');
+    const payments = await dbAll(`
+      SELECT 
+        'income' as type,
+        'Thanh toán từ khách' as category,
+        c.name || ' - ' || o.order_code || CASE 
+          WHEN p.payment_method THEN ' (' || p.payment_method || ')'
+          ELSE ''
+        END as description,
+        p.amount,
+        p.payment_date as transaction_date,
+        'PAY-' || p.id as reference,
+        'payment' as source
+      FROM payments p
+      JOIN orders o ON p.order_id = o.id
+      JOIN customers c ON o.customer_id = c.id
+      WHERE p.payment_date IS NOT NULL
+        ${df.clause}
+      ORDER BY p.payment_date DESC
+    `, df.params);
+    if (payments && payments.length > 0) consolidated.push(...payments);
+  } catch (e) { console.log('Skip payments:', e.message); }
+
+  // ========== CHI (TẤT CẢ CHI PHÍ THỰC TẾ) ==========
+  // 2. Lương tài xế đã trả
+  try {
+    const df = buildDateFilter('s.paid_date');
+    const salaries = await dbAll(`
+      SELECT 
+        'expense' as type,
+        'Lương tài xế' as category,
+        d.name || ' - Tháng ' || s.salary_month as description,
+        s.total_salary as amount,
+        s.paid_date as transaction_date,
+        'SALARY-' || s.id as reference,
+        'salary' as source
+      FROM driver_salaries s
+      JOIN drivers d ON s.driver_id = d.id
+      WHERE s.status = 'paid' AND s.paid_date IS NOT NULL
+        ${df.clause}
+      ORDER BY s.paid_date DESC
+    `, df.params);
+    if (salaries && salaries.length > 0) consolidated.push(...salaries);
+  } catch (e) { console.log('Skip salaries:', e.message); }
+
+  // 3. Nhiên liệu
+  try {
+    const df = buildDateFilter('fr.fuel_date');
+    const fuel = await dbAll(`
+      SELECT 
+        'expense' as type,
+        'Nhiên liệu' as category,
+        v.plate_number || ' - ' || fr.liters || 'L @ ' || fr.price_per_liter || 'đ/L' as description,
+        fr.total_cost as amount,
+        fr.fuel_date as transaction_date,
+        'FUEL-' || fr.id as reference,
+        'fuel' as source
+      FROM fuel_records fr
+      JOIN vehicles v ON fr.vehicle_id = v.id
+      WHERE fr.fuel_date IS NOT NULL
+        ${df.clause}
+      ORDER BY fr.fuel_date DESC
+    `, df.params);
+    if (fuel && fuel.length > 0) consolidated.push(...fuel);
+  } catch (e) { console.log('Skip fuel:', e.message); }
+
+  // 4. Bảo dưỡng xe
+  try {
+    const df = buildDateFilter('m.maintenance_date');
+    const maintenance = await dbAll(`
+      SELECT 
+        'expense' as type,
+        'Bảo dưỡng xe' as category,
+        v.plate_number || ' - ' || m.maintenance_type as description,
+        m.cost as amount,
+        m.maintenance_date as transaction_date,
+        'MAINT-' || m.id as reference,
+        'maintenance' as source
+      FROM vehicle_maintenance m
+      JOIN vehicles v ON m.vehicle_id = v.id
+      WHERE m.maintenance_date IS NOT NULL
+        ${df.clause}
+      ORDER BY m.maintenance_date DESC
+    `, df.params);
+    if (maintenance && maintenance.length > 0) consolidated.push(...maintenance);
+  } catch (e) { console.log('Skip maintenance:', e.message); }
+
+  // 4b. Phí xe (đăng kiểm/bảo hiểm/...) đã trả
+  try {
+    const df = buildDateFilter('f.paid_date');
+    const vehicleFees = await dbAll(`
+      SELECT
+        'expense' as type,
+        'Phí xe' as category,
+        v.plate_number || ' - ' || f.fee_type as description,
+        f.amount as amount,
+        f.paid_date as transaction_date,
+        'VFE-' || f.id as reference,
+        'vehicle_fee' as source
+      FROM vehicle_fees f
+      JOIN vehicles v ON f.vehicle_id = v.id
+      WHERE f.paid_date IS NOT NULL
+        ${df.clause}
+      ORDER BY f.paid_date DESC
+    `, df.params);
+    if (vehicleFees && vehicleFees.length > 0) consolidated.push(...vehicleFees);
+  } catch (e) { console.log('Skip vehicle fees:', e.message); }
+
+  // 5. Chi phí chuyến (trip_costs)
+  try {
+    const dateExpr = `COALESCE(tc.cost_date, o.delivery_date, o.order_date)`;
+    const df = buildDateFilter(dateExpr);
+    const tripCosts = await dbAll(`
+      SELECT 
+        'expense' as type,
+        tc.cost_type as category,
+        o.order_code || ' - ' || COALESCE(tc.notes, tc.receipt_number, tc.cost_type) as description,
+        tc.amount,
+        ${dateExpr} as transaction_date,
+        'COST-' || tc.id as reference,
+        'trip_cost' as source
+      FROM trip_costs tc
+      JOIN orders o ON tc.order_id = o.id
+      WHERE 1=1
+        ${df.clause}
+      ORDER BY transaction_date DESC
+    `, df.params);
+    if (tripCosts && tripCosts.length > 0) consolidated.push(...tripCosts);
+  } catch (e) { console.log('Skip trip_costs:', e.message); }
+
+  // 6. Tạm ứng cho tài xế
+  try {
+    const df = buildDateFilter('da.advance_date');
+    const advances = await dbAll(`
+      SELECT 
+        'expense' as type,
+        'Tạm ứng tài xế' as category,
+        d.name || ' - ' || COALESCE(da.purpose, da.notes, 'Tạm ứng') as description,
+        da.amount,
+        da.advance_date as transaction_date,
+        'ADV-' || da.id as reference,
+        'advance' as source
+      FROM driver_advances da
+      JOIN drivers d ON da.driver_id = d.id
+      WHERE da.advance_date IS NOT NULL
+        ${df.clause}
+      ORDER BY da.advance_date DESC
+    `, df.params);
+    if (advances && advances.length > 0) consolidated.push(...advances);
+  } catch (e) { console.log('Skip advances:', e.message); }
+
+  // 7. Thu/Chi thủ công khác (ngoài hệ thống)
+  try {
+    const df = buildDateFilter('transaction_date');
+    const manual = await dbAll(`
+      SELECT 
+        type,
+        category,
+        description,
+        amount,
+        transaction_date,
+        'MANUAL-' || id as reference,
+        'manual' as source
+      FROM cash_flow
+      WHERE 1=1
+        ${df.clause}
+      ORDER BY transaction_date DESC
+    `, df.params);
+    if (manual && manual.length > 0) consolidated.push(...manual);
+  } catch (e) { console.log('Skip cash_flow:', e.message); }
+
+  consolidated.sort((a, b) => {
+    const dateA = new Date(a.transaction_date || '1970-01-01');
+    const dateB = new Date(b.transaction_date || '1970-01-01');
+    return dateB - dateA;
+  });
+
+  return consolidated;
+}
+
 // Get consolidated cash flow (TỰ ĐỘNG tổng hợp từ tất cả nguồn)
 app.get('/api/cash-flow/consolidated', authenticateToken, async (req, res) => {
   try {
     const { from, to } = req.query;
-
-    const buildDateFilter = (columnName) => {
-      let clause = '';
-      const params = [];
-      if (from) {
-        clause += ` AND ${columnName} >= ?`;
-        params.push(from);
-      }
-      if (to) {
-        clause += ` AND ${columnName} <= ?`;
-        params.push(to);
-      }
-      return { clause, params };
-    };
-    
-    const consolidated = [];
-    
-    // ========== THU (TIỀN THỰC TẾ NHẬN ĐƯỢC) ==========
-    // 1. Thanh toán từ khách hàng (payments)
-    try {
-      const df = buildDateFilter('p.payment_date');
-      const payments = await dbAll(`
-        SELECT 
-          'income' as type,
-          'Thanh toán từ khách' as category,
-          c.name || ' - ' || o.order_code || CASE 
-            WHEN p.payment_method THEN ' (' || p.payment_method || ')'
-            ELSE ''
-          END as description,
-          p.amount,
-          p.payment_date as transaction_date,
-          'PAY-' || p.id as reference,
-          'payment' as source
-        FROM payments p
-        JOIN orders o ON p.order_id = o.id
-        JOIN customers c ON o.customer_id = c.id
-        WHERE p.payment_date IS NOT NULL
-          ${df.clause}
-        ORDER BY p.payment_date DESC
-      `, df.params);
-      if (payments && payments.length > 0) consolidated.push(...payments);
-    } catch (e) { console.log('Skip payments:', e.message); }
-    
-    // ========== CHI (TẤT CẢ CHI PHÍ THỰC TẾ) ==========
-    // 2. Lương tài xế đã trả
-    try {
-      const df = buildDateFilter('s.paid_date');
-      const salaries = await dbAll(`
-        SELECT 
-          'expense' as type,
-          'Lương tài xế' as category,
-          d.name || ' - Tháng ' || s.salary_month as description,
-          s.total_salary as amount,
-          s.paid_date as transaction_date,
-          'SALARY-' || s.id as reference,
-          'salary' as source
-        FROM driver_salaries s
-        JOIN drivers d ON s.driver_id = d.id
-        WHERE s.status = 'paid' AND s.paid_date IS NOT NULL
-          ${df.clause}
-        ORDER BY s.paid_date DESC
-      `, df.params);
-      if (salaries && salaries.length > 0) consolidated.push(...salaries);
-    } catch (e) { console.log('Skip salaries:', e.message); }
-    
-    // 3. Nhiên liệu
-    try {
-      const df = buildDateFilter('fr.fuel_date');
-      const fuel = await dbAll(`
-        SELECT 
-          'expense' as type,
-          'Nhiên liệu' as category,
-          v.plate_number || ' - ' || fr.liters || 'L @ ' || fr.price_per_liter || 'đ/L' as description,
-          fr.total_cost as amount,
-          fr.fuel_date as transaction_date,
-          'FUEL-' || fr.id as reference,
-          'fuel' as source
-        FROM fuel_records fr
-        JOIN vehicles v ON fr.vehicle_id = v.id
-        WHERE fr.fuel_date IS NOT NULL
-          ${df.clause}
-        ORDER BY fr.fuel_date DESC
-      `, df.params);
-      if (fuel && fuel.length > 0) consolidated.push(...fuel);
-    } catch (e) { console.log('Skip fuel:', e.message); }
-    
-    // 4. Bảo dưỡng xe
-    try {
-      const df = buildDateFilter('m.maintenance_date');
-      const maintenance = await dbAll(`
-        SELECT 
-          'expense' as type,
-          'Bảo dưỡng xe' as category,
-          v.plate_number || ' - ' || m.maintenance_type as description,
-          m.cost as amount,
-          m.maintenance_date as transaction_date,
-          'MAINT-' || m.id as reference,
-          'maintenance' as source
-        FROM vehicle_maintenance m
-        JOIN vehicles v ON m.vehicle_id = v.id
-        WHERE m.maintenance_date IS NOT NULL
-          ${df.clause}
-        ORDER BY m.maintenance_date DESC
-      `, df.params);
-      if (maintenance && maintenance.length > 0) consolidated.push(...maintenance);
-    } catch (e) { console.log('Skip maintenance:', e.message); }
-
-    // 4b. Phí xe (đăng kiểm/bảo hiểm/...) đã trả
-    try {
-      const df = buildDateFilter('f.paid_date');
-      const vehicleFees = await dbAll(`
-        SELECT
-          'expense' as type,
-          'Phí xe' as category,
-          v.plate_number || ' - ' || f.fee_type as description,
-          f.amount as amount,
-          f.paid_date as transaction_date,
-          'VFE-' || f.id as reference,
-          'vehicle_fee' as source
-        FROM vehicle_fees f
-        JOIN vehicles v ON f.vehicle_id = v.id
-        WHERE f.paid_date IS NOT NULL
-          ${df.clause}
-        ORDER BY f.paid_date DESC
-      `, df.params);
-      if (vehicleFees && vehicleFees.length > 0) consolidated.push(...vehicleFees);
-    } catch (e) { console.log('Skip vehicle fees:', e.message); }
-    
-    // 5. Chi phí chuyến (trip_costs)
-    try {
-      const dateExpr = `COALESCE(tc.cost_date, o.delivery_date, o.order_date)`;
-      const df = buildDateFilter(dateExpr);
-      const tripCosts = await dbAll(`
-        SELECT 
-          'expense' as type,
-          tc.cost_type as category,
-          o.order_code || ' - ' || COALESCE(tc.notes, tc.receipt_number, tc.cost_type) as description,
-          tc.amount,
-          ${dateExpr} as transaction_date,
-          'COST-' || tc.id as reference,
-          'trip_cost' as source
-        FROM trip_costs tc
-        JOIN orders o ON tc.order_id = o.id
-        WHERE 1=1
-          ${df.clause}
-        ORDER BY transaction_date DESC
-      `, df.params);
-      if (tripCosts && tripCosts.length > 0) consolidated.push(...tripCosts);
-    } catch (e) { console.log('Skip trip_costs:', e.message); }
-    
-    // 6. Tạm ứng cho tài xế
-    try {
-      const df = buildDateFilter('da.advance_date');
-      const advances = await dbAll(`
-        SELECT 
-          'expense' as type,
-          'Tạm ứng tài xế' as category,
-          d.name || ' - ' || COALESCE(da.purpose, da.notes, 'Tạm ứng') as description,
-          da.amount,
-          da.advance_date as transaction_date,
-          'ADV-' || da.id as reference,
-          'advance' as source
-        FROM driver_advances da
-        JOIN drivers d ON da.driver_id = d.id
-        WHERE da.advance_date IS NOT NULL
-          ${df.clause}
-        ORDER BY da.advance_date DESC
-      `, df.params);
-      if (advances && advances.length > 0) consolidated.push(...advances);
-    } catch (e) { console.log('Skip advances:', e.message); }
-    
-    // 7. Thu/Chi thủ công khác (ngoài hệ thống)
-    try {
-      const df = buildDateFilter('transaction_date');
-      const manual = await dbAll(`
-        SELECT 
-          type,
-          category,
-          description,
-          amount,
-          transaction_date,
-          'MANUAL-' || id as reference,
-          'manual' as source
-        FROM cash_flow
-        WHERE 1=1
-          ${df.clause}
-        ORDER BY transaction_date DESC
-      `, df.params);
-      if (manual && manual.length > 0) consolidated.push(...manual);
-    } catch (e) { console.log('Skip cash_flow:', e.message); }
-    
-    // Sắp xếp theo ngày
-    consolidated.sort((a, b) => {
-      const dateA = new Date(a.transaction_date || '1970-01-01');
-      const dateB = new Date(b.transaction_date || '1970-01-01');
-      return dateB - dateA;
-    });
-    
+    const consolidated = await getConsolidatedCashFlow({ from, to });
     res.json(consolidated);
   } catch (error) {
     console.error('Error getting consolidated cash flow:', error);
@@ -3183,51 +3283,86 @@ app.delete('/api/cash-flow/:id', authenticateToken, requireRole('admin'), async 
 app.get('/api/expense-reports', authenticateToken, async (req, res) => {
   try {
     const { vehicle_id, from, to } = req.query;
-    
-    // Query đơn giản hơn - tính chi phí trực tiếp từ các bảng liên quan đến xe
-    // Lương tài xế được tính riêng vì không có liên kết trực tiếp với xe
+    const normalizeMonthToDate = (value, isEnd) => {
+      if (!value) return null;
+      const str = String(value);
+      if (/^\d{4}-\d{2}$/.test(str)) {
+        if (!isEnd) return `${str}-01`;
+        const [y, m] = str.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        return `${str}-${String(lastDay).padStart(2, '0')}`;
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      return str;
+    };
+
+    const fromDate = normalizeMonthToDate(from, false);
+    const toDate = normalizeMonthToDate(to, true);
+
+    const buildRange = (columnName, params) => {
+      const clauses = [];
+      if (fromDate) {
+        clauses.push(`${columnName} >= ?`);
+        params.push(fromDate);
+      }
+      if (toDate) {
+        clauses.push(`${columnName} <= ?`);
+        params.push(toDate);
+      }
+      return clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
+    };
+
+    const fuelParams = [];
+    const maintenanceParams = [];
+    const feeParams = [];
+
+    const fuelSubquery = `
+      SELECT vehicle_id, COALESCE(SUM(total_cost), 0) AS fuel_cost
+      FROM fuel_records
+      WHERE fuel_date IS NOT NULL
+      ${buildRange('fuel_date', fuelParams)}
+      GROUP BY vehicle_id
+    `;
+
+    const maintenanceSubquery = `
+      SELECT vehicle_id, COALESCE(SUM(cost), 0) AS maintenance_cost
+      FROM vehicle_maintenance
+      WHERE maintenance_date IS NOT NULL
+      ${buildRange('maintenance_date', maintenanceParams)}
+      GROUP BY vehicle_id
+    `;
+
+    const feeDateExpr = `COALESCE(paid_date, substr(created_at, 1, 10))`;
+    const feeSubquery = `
+      SELECT vehicle_id, COALESCE(SUM(amount), 0) AS fee_cost
+      FROM vehicle_fees
+      WHERE ${feeDateExpr} IS NOT NULL
+      ${buildRange(feeDateExpr, feeParams)}
+      GROUP BY vehicle_id
+    `;
+
     let query = `
-      SELECT 
+      SELECT
         v.id as vehicle_id,
         v.plate_number,
-        COALESCE(SUM(fr.total_cost), 0) as fuel_cost,
-        COALESCE(SUM(vm.cost), 0) as maintenance_cost,
-        COALESCE(SUM(vf.amount), 0) as fee_cost,
-        (COALESCE(SUM(fr.total_cost), 0) + COALESCE(SUM(vm.cost), 0) + 
-         COALESCE(SUM(vf.amount), 0)) as total_expenses
+        COALESCE(fr.fuel_cost, 0) as fuel_cost,
+        COALESCE(vm.maintenance_cost, 0) as maintenance_cost,
+        COALESCE(vf.fee_cost, 0) as fee_cost,
+        (COALESCE(fr.fuel_cost, 0) + COALESCE(vm.maintenance_cost, 0) + COALESCE(vf.fee_cost, 0)) as total_expenses
       FROM vehicles v
-      LEFT JOIN fuel_records fr ON v.id = fr.vehicle_id
-      LEFT JOIN vehicle_maintenance vm ON v.id = vm.vehicle_id
-      LEFT JOIN vehicle_fees vf ON v.id = vf.vehicle_id
+      LEFT JOIN (${fuelSubquery}) fr ON v.id = fr.vehicle_id
+      LEFT JOIN (${maintenanceSubquery}) vm ON v.id = vm.vehicle_id
+      LEFT JOIN (${feeSubquery}) vf ON v.id = vf.vehicle_id
       WHERE 1=1
     `;
-    
-    const params = [];
-    
+
+    const params = [...fuelParams, ...maintenanceParams, ...feeParams];
     if (vehicle_id) {
-      query += ` AND v.id = ?`;
+      query += ' AND v.id = ?';
       params.push(vehicle_id);
     }
-    
-    if (from) {
-      query += ` AND (
-        (fr.fuel_date >= ? OR fr.fuel_date IS NULL) AND
-        (vm.maintenance_date >= ? OR vm.maintenance_date IS NULL) AND
-        (vf.created_at >= ? OR vf.created_at IS NULL)
-      )`;
-      params.push(from, from, from);
-    }
-    
-    if (to) {
-      query += ` AND (
-        (fr.fuel_date <= ? OR fr.fuel_date IS NULL) AND
-        (vm.maintenance_date <= ? OR vm.maintenance_date IS NULL) AND
-        (vf.created_at <= ? OR vf.created_at IS NULL)
-      )`;
-      params.push(to, to, to);
-    }
-    
-    query += ` GROUP BY v.id, v.plate_number`;
+
+    query += ' ORDER BY total_expenses DESC';
     
     db.all(query, params, async (err, rows) => {
       if (err) {
@@ -3236,6 +3371,8 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
       }
       
       // Tính lương tài xế cho mỗi xe dựa trên các đơn hàng
+      const salaryFrom = from ? String(from).substring(0, 7) : null;
+      const salaryTo = to ? String(to).substring(0, 7) : null;
       for (let row of rows) {
         let salaryQuery = `
           SELECT COALESCE(SUM(ds.total_salary), 0) as salary_cost
@@ -3248,13 +3385,13 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
         `;
         const salaryParams = [row.vehicle_id];
         
-        if (from) {
+        if (salaryFrom) {
           salaryQuery += ` AND ds.salary_month >= ?`;
-          salaryParams.push(from);
+          salaryParams.push(salaryFrom);
         }
-        if (to) {
+        if (salaryTo) {
           salaryQuery += ` AND ds.salary_month <= ?`;
-          salaryParams.push(to);
+          salaryParams.push(salaryTo);
         }
         
         const salaryResult = await new Promise((resolve, reject) => {
@@ -3283,7 +3420,7 @@ app.get('/api/expense-reports', authenticateToken, async (req, res) => {
 // EXPORT EXCEL APIs
 // ====================
 
-const { exportFuelReport, exportCashFlowReport, exportExpenseReport } = require('./excel-export');
+const { exportFuelReport, exportCashFlowReport, exportCashFlowConsolidatedReport, exportExpenseReport, exportQuoteReport } = require('./excel-export');
 
 // Export báo cáo nhiên liệu
 app.get('/api/export/fuel-records', authenticateToken, async (req, res) => {
@@ -3322,8 +3459,9 @@ app.get('/api/export/fuel-records', authenticateToken, async (req, res) => {
 app.get('/api/export/cash-flow', authenticateToken, requireRole('admin', 'accountant'), async (req, res) => {
   try {
     const { type, from, to } = req.query;
-    
-    const buffer = await exportCashFlowReport(db, { type, from, to });
+
+    const consolidated = await getConsolidatedCashFlow({ from, to });
+    const buffer = await exportCashFlowConsolidatedReport(consolidated, { type, from, to });
     
     const filename = `BaoCaoDongTien_${from || 'Dau'}_${to || 'Cuoi'}_${Date.now()}.xlsx`;
     
@@ -3357,6 +3495,28 @@ app.get('/api/export/expense-reports', authenticateToken, requireRole('admin', '
   } catch (error) {
     console.error('Lỗi export expense reports:', error);
     res.status(500).json({ error: 'Lỗi xuất báo cáo' });
+  }
+});
+
+// Export báo giá (Excel)
+app.get('/api/export/quotes/:id/excel', authenticateToken, async (req, res) => {
+  try {
+    const { company_name, director_name } = req.query;
+    const buffer = await exportQuoteReport(db, req.params.id, { company_name, director_name });
+
+    const filename = `BaoGia_${req.params.id}_${Date.now()}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+
+    logAudit(req.user.id, req.user.username, req.user.role, 'export', 'quotes',
+      req.params.id, null, { type: 'excel' }, req.ip);
+  } catch (error) {
+    console.error('Lỗi export quote:', error);
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Không tìm thấy báo giá' });
+    }
+    res.status(500).json({ error: 'Lỗi xuất báo giá' });
   }
 });
 
